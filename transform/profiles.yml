@@ -1,0 +1,7 @@
+yego_ops:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ../data/yego.duckdb
+      threads: 4

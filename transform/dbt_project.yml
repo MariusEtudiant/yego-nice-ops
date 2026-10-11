@@ -1,0 +1,27 @@
+name: yego_ops
+version: "1.0.0"
+config-version: 2
+profile: yego_ops
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+vars:
+  # Snapshots bruts du collecteur : data/raw/city=<ville>/date=<jour>/fbs_<epoch>.parquet
+  raw_glob: "../data/raw/*/*/*.parquet"
+  # Identifiants stables reconstruits par src/track_vehicles.py
+  tracks_glob: "../data/tracks/*/tracks.parquet"
+  # Seuils metier
+  low_battery_pct: 20
+  idle_hours_threshold: 6
+  swap_min_gain: 20
+  # Cadence du collecteur (secondes) et tolerance avant de compter un trou
+  snapshot_interval_s: 120
+  gap_tolerance_s: 360
+
+models:
+  yego_ops:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

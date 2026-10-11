@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: stg_vehicle_snapshots
+    description: "Un vehicule vu dans un snapshot GBFS. volatile_bike_id est regenere a chaque requete."
+    columns:
+      - name: city
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["nice", "barcelona"]
+      - name: snapshot_ts
+        tests: [not_null]
+      - name: lat
+        tests: [not_null]
+      - name: lon
+        tests: [not_null]
+      - name: vehicle_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["yego_scooter", "yego_bike", "yego_kick"]
+      - name: battery_pct
+        tests: [not_null]
+
+  - name: stg_snapshots
+    description: "Un snapshot par ville et par instant ; sert au controle de completude de la collecte."
+
+  - name: fct_fleet_hourly
+    description: "Etat moyen de la flotte par ville et par heure."
+
+  - name: fct_zone_hourly
+    description: "Offre (vehicules disponibles) et demande (departs, arrivees) par zone de ~500 m et par heure."
+
+  - name: fct_vehicle_stays
+    description: "Sejour d'un vehicule a un emplacement, reconstitue par le suivi de position (pas par identifiant)."
+    columns:
+      - name: track_id
+        tests: [unique, not_null]
+      - name: stay_hours
+        tests: [not_null]
+
+  - name: fct_battery_swaps
+    description: "Changements de batterie detectes : batterie qui remonte de 20 points ou plus sur place."

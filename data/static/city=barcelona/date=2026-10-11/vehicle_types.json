@@ -1,5 +1,5 @@
 {
-  "last_updated": 1791735863,
+  "last_updated": 1791736322,
   "ttl": 240,
   "data": {
     "vehicle_types": [
@@ -12,8 +12,8 @@
         "rider_capacity": 2,
         "eco_label": [
           {
-            "country_code": "FR",
-            "eco_sticker": "critair_0"
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
           }
         ],
         "g_CO2_KM": 0,
@@ -23,9 +23,9 @@
         "max_permitted_speed": 45,
         "default_reserve_time": 15,
         "return_constraint": "free_floating",
-        "default_pricing_plan_id": "nice yego_scooter",
+        "default_pricing_plan_id": "barcelona yego_scooter",
         "pricing_plan_ids": [
-          "nice yego_scooter"
+          "barcelona yego_scooter"
         ]
       },
       {
@@ -37,8 +37,8 @@
         "rider_capacity": 1,
         "eco_label": [
           {
-            "country_code": "FR",
-            "eco_sticker": "critair_0"
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
           }
         ],
         "g_CO2_KM": 0,
@@ -48,9 +48,9 @@
         "max_permitted_speed": 25,
         "default_reserve_time": 15,
         "return_constraint": "free_floating",
-        "default_pricing_plan_id": "nice yego_bike",
+        "default_pricing_plan_id": "barcelona yego_bike",
         "pricing_plan_ids": [
-          "nice yego_bike"
+          "barcelona yego_bike"
         ]
       },
       {
@@ -62,8 +62,8 @@
         "rider_capacity": 1,
         "eco_label": [
           {
-            "country_code": "FR",
-            "eco_sticker": "critair_0"
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
           }
         ],
         "g_CO2_KM": 0,
@@ -73,9 +73,9 @@
         "max_permitted_speed": 25,
         "default_reserve_time": 15,
         "return_constraint": "free_floating",
-        "default_pricing_plan_id": "nice yego_kick",
+        "default_pricing_plan_id": "barcelona yego_kick",
         "pricing_plan_ids": [
-          "nice yego_kick"
+          "barcelona yego_kick"
         ]
       }
     ]

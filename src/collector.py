@@ -1,8 +1,8 @@
 """
 YEGO Nice - Operations Monitor : collecteur GBFS.
 
-Capture le flux GBFS free-floating de YEGO a Nice et stocke chaque snapshot
-en Parquet partitionne par jour. Concu pour tourner sans surveillance pendant
+Capture le flux GBFS free-floating de YEGO (Nice, et Barcelone en comparaison) et stocke
+chaque snapshot en Parquet partitionne par ville et par jour. Concu pour tourner sans surveillance pendant
 plusieurs jours : il ne doit JAMAIS crasher sur une erreur reseau.
 
 Usage :

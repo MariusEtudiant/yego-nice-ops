@@ -13,8 +13,11 @@ vars:
   tracks_glob: "../data/tracks/*/tracks.parquet"
   # Seuils metier
   low_battery_pct: 20
+  # Seuil observe dans les donnees : aucun vehicule actif sous 15 % (YEGO les desactive).
+  disable_battery_pct: 15
   idle_hours_threshold: 6
   swap_min_gain: 20
+  swap_max_move_m: 5
   # Cadence du collecteur (secondes) et tolerance avant de compter un trou
   snapshot_interval_s: 120
   gap_tolerance_s: 360

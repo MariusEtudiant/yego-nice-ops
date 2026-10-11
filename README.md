@@ -1,57 +1,89 @@
 # YEGO Nice — Operations Monitor
 
-Pipeline data de bout en bout sur la flotte de scooters électriques en free-floating
-de **YEGO à Nice**, construit à partir de son flux public **GBFS**.
+Analyse opérationnelle de la flotte de scooters électriques **YEGO à Nice** (et Barcelone en
+comparaison), construite uniquement à partir du flux public **GBFS** de l'opérateur.
 
-> Objectif : analyser une semaine réelle d'exploitation de la flotte niçoise et en
-> tirer des recommandations opérationnelles concrètes (repositionnement, maintenance,
-> gestion de la batterie).
+**Livrable principal : [la note d'analyse d'une page](reports/note_yego_nice.pdf)**
+(disponibilité, file d'attente batterie, offre et demande par quartier, 3 recommandations).
 
-## Stack
+## Ce que montrent les données
 
-`Python` (collecte) · `Parquet` + `DuckDB` (stockage / requêtes) · `dbt` (transformation)
-· `H3` (découpage géographique) · `Streamlit` (dashboard) · `GitHub Actions` (orchestration)
+- **YEGO désactive tout scooter sous 15 % de batterie.** Aucun véhicule actif sous ce seuil, dans
+  les deux villes. Les véhicules désactivés se divisent donc en deux groupes : la file d'attente
+  des changements de batterie, et les désactivations pour un autre motif (maintenance, etc.).
+  Ce dernier groupe, invisible si l'on ne regarde que la batterie, pèse environ 10 % de la flotte.
+- **Les changements de batterie sont détectables depuis l'extérieur** : même véhicule, même
+  emplacement, batterie qui passe par exemple de 7 % à 92 % et véhicule réactivé.
+- **Offre et demande par quartier** : stock moyen de scooters disponibles et départs observés par
+  zone d'environ 500 m, nommées via OpenStreetMap.
+
+## Le problème technique : des identifiants anonymisés
+
+Le flux GBFS de YEGO **régénère le `bike_id` à chaque requête**. Entre deux relevés espacés de
+4 minutes, aucun identifiant n'est commun, alors que 113 scooters n'avaient pas bougé d'un mètre.
+Impossible donc de suivre un véhicule par son identifiant.
+
+[`src/track_vehicles.py`](src/track_vehicles.py) reconstitue un identifiant stable :
+
+1. paires candidates entre deux relevés successifs : même type de véhicule, à moins de 15 m ;
+2. coût d'une paire : distance + petit poids sur l'écart de batterie ;
+3. **affectation optimale un-pour-un** (algorithme hongrois), résolue par groupe de véhicules
+   proches pour rester rapide sur les 1 700 scooters de Barcelone ;
+4. seconde passe pour les sauts GPS jusqu'à 150 m, à batterie quasi identique.
+
+Pourquoi pas un simple « plus proche voisin » ? Quand plusieurs scooters sont garés côte à côte, le
+bruit GPS échange les voisins et coupait à tort environ 10 % des suivis.
+
+Un véhicule loué disparaît du flux : la fin d'un suivi est donc un **départ**, son début une **arrivée**.
 
 ## Architecture
 
 ```
-GBFS (services.rideyego.com)
-   │  collecteur Python, 1 snapshot / 2 min
-   ▼
-data/raw/date=YYYY-MM-DD/fbs_<epoch>.parquet      (snapshots bruts horodatés)
-data/static/date=YYYY-MM-DD/*.json                (types de véhicules, zones, pricing)
-   │  dbt + DuckDB
-   ▼
-staging  →  fait vehicle_snapshots  +  dimensions (zone H3, heure)
-   │
-   ▼
-KPI opérationnels  →  dashboard Streamlit  +  one-pager PDF
+GBFS YEGO (Nice, Barcelone)
+  │  src/collector.py — 1 relevé toutes les 2 min, ne s'arrête jamais sur une erreur réseau
+  ▼
+data/raw/city=…/date=…/fbs_<epoch>.parquet
+  │  src/track_vehicles.py — identifiant stable reconstruit
+  ▼
+transform/ (dbt + DuckDB)
+  staging   stg_vehicle_snapshots, stg_snapshots
+  marts     fct_fleet_hourly       état de la flotte par heure
+            fct_vehicle_stays      séjours, départs, arrivées
+            fct_battery_swaps      changements de batterie détectés
+            fct_zone_hourly        offre et demande par zone et par heure
+  │  src/build_report.py
+  ▼
+reports/note_yego_nice.pdf
 ```
 
-## Note technique : anonymisation des identifiants
+## Qualité des données (tests dbt)
 
-Le flux GBFS de YEGO **régénère le `bike_id` à chaque requête** : vérifié
-empiriquement, **0 %** des identifiants persistent entre deux snapshots espacés de
-4 min, alors que 113 véhicules étaient à une position strictement identique (donc
-immobiles). Le suivi d'un véhicule par son ID est donc impossible.
+| Test | Rôle |
+|---|---|
+| `assert_coords_in_city` | position hors de la zone de service : a détecté un scooter publié en (0, 0) |
+| `assert_no_collection_gap` | trou dans la collecte au-delà de 6 min |
+| `assert_low_battery_vehicles_are_disabled` | vérifie que la règle des 15 % tient toujours |
+| `assert_valid_positions_are_tracked` | chaque observation valide a bien un identifiant stable |
+| `assert_battery_in_range`, `not_null`, `accepted_values`, `unique` | intégrité de base |
 
-Conséquence : le temps d'immobilisation et les trajets sont reconstruits par
-**matching de proximité géographique** entre snapshots successifs, pas par l'ID.
-Les KPI agrégés (disponibilité, batterie, véhicules désactivés) ne sont pas affectés.
+Les anomalies (GPS aberrant, trou de collecte) sont en **avertissement** : elles sont exclues des
+indicateurs mais restent visibles à chaque exécution.
 
-## Données disponibles par véhicule
-
-`lat` / `lon` · `current_fuel_percent` · `current_range_meters` · `vehicle_type_id`
-(scooter / bike / kick) · `is_reserved` · `is_disabled` · `last_reported`.
-
-## Lancer la collecte
+## Lancer le projet
 
 ```bash
-pip install -r requirements.txt
-python src/collector.py --loop --interval 120   # boucle, 1 snapshot / 2 min
-python src/collector.py                         # une seule capture (cron / CI)
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt     # Windows ; bin/pip sous Linux/macOS
+.venv/Scripts/python src/collector.py --loop       # collecte continue
+.venv/Scripts/python src/pipeline.py               # suivi → dbt build → note → export
 ```
 
-## Statut
+Les relevés bruts ne sont pas versionnés (un fichier par relevé). Le jeu de données complet est
+dans [`data/compact/`](data/compact) : un Parquet par ville, avec l'identifiant reconstruit.
 
-🟢 Collecte en cours — en route vers 7 jours de données.
+## Limites
+
+- Période courte : les recommandations sont des premiers constats, à confirmer sur plusieurs semaines.
+- Un « départ » inclut les retraits par les équipes terrain, que le flux public ne distingue pas
+  d'une location.
+- Les durées d'immobilisation des véhicules déjà présents au début de la collecte sont sous-estimées.

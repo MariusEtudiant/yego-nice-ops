@@ -31,6 +31,11 @@ select
     raw.is_disabled,
     not raw.is_reserved and not raw.is_disabled                       as is_available,
     raw.current_fuel_percent < {{ var("low_battery_pct") }}           as is_low_battery,
+    case
+        when not raw.is_disabled then null
+        when raw.current_fuel_percent < {{ var("disable_battery_pct") }} then 'battery'
+        else 'other'
+    end                                                               as unavailability_reason,
     -- Emprise de service (Barcelone inclut Badalona, L'Hospitalet, Cornella).
     (raw.city = 'nice'      and raw.lat between 43.60 and 43.80 and raw.lon between 7.10 and 7.40)
     or (raw.city = 'barcelona' and raw.lat between 41.30 and 41.50 and raw.lon between 2.00 and 2.30)

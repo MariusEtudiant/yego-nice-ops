@@ -2,11 +2,11 @@
 requests>=2.31
 pyarrow>=14.0
 
-# Analyse / transformation
-duckdb>=0.10
+# Suivi des vehicules et transformation
+duckdb>=1.0
 pandas>=2.0
-h3>=3.7
+scipy>=1.10
+dbt-duckdb>=1.8
 
-# Dashboard
-streamlit>=1.30
-pydeck>=0.8
+# Note d'analyse
+matplotlib>=3.7

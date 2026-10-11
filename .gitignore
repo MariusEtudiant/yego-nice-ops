@@ -1,0 +1,17 @@
+# Snapshots bruts : volumineux et nombreux (~720/jour). On versionne une version
+# compactee par jour (data/compact/) et un echantillon, pas les 5000+ fichiers bruts.
+data/raw/
+logs/
+*.duckdb
+*.duckdb.wal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db

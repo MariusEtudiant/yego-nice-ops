@@ -1,0 +1,12 @@
+# Collecteur (le minimum pour capturer)
+requests>=2.31
+pyarrow>=14.0
+
+# Analyse / transformation
+duckdb>=0.10
+pandas>=2.0
+h3>=3.7
+
+# Dashboard
+streamlit>=1.30
+pydeck>=0.8

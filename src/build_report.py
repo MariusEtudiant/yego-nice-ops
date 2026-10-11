@@ -202,8 +202,10 @@ def build() -> dict:
         group by zone_id""", **p).dropna(subset=["lat"])
     zones["pressure"] = zones["departures"] / (zones["stock"] + 1)
     tension = zones[zones["departures"] >= 3].sort_values("pressure", ascending=False).head(3).copy()
-    surplus = (zones[zones["stock"] >= 3]
-               .sort_values(["departures", "stock"], ascending=[True, False]).head(3).copy())
+    # On prend plus de candidats en surplus : ceux qui portent le meme nom de quartier qu'une
+    # zone en tension seront ecartes (deux zones voisines, message contradictoire a la lecture).
+    surplus = (zones[(zones["stock"] >= 3) & ~zones["zone_id"].isin(tension["zone_id"])]
+               .sort_values(["departures", "stock"], ascending=[True, False]).head(8).copy())
     battery_queue_total = int(battery_queue["n"].sum())
     battery_queue = battery_queue.head(3).copy()
 
@@ -237,6 +239,7 @@ def build() -> dict:
     cache = json.loads(ZONE_NAMES_CACHE.read_text(encoding="utf-8")) if ZONE_NAMES_CACHE.exists() else {}
     for df in (battery_queue, tension, surplus):
         df["name"] = [zone_name(z, la, lo, cache) for z, la, lo in zip(df.zone_id, df.lat, df.lon)]
+    surplus = surplus[~surplus["name"].isin(tension["name"])].head(3)
     ZONE_NAMES_CACHE.parent.mkdir(parents=True, exist_ok=True)
     ZONE_NAMES_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -283,6 +286,11 @@ def plural(n: int, word: str) -> str:
     return f"{n} {word}{'s' if n > 1 else ''}"
 
 
+def departures_text(df: pd.DataFrame) -> str:
+    n = int(round(df["departures"].sum()))
+    return "aucun départ" if n == 0 else plural(n, "départ")
+
+
 def duration(hours: float) -> str:
     return f"{fr(hours * 60)} min" if hours < 2 else f"{fr(hours)} h"
 
@@ -305,18 +313,23 @@ def render(k: dict) -> str:
     if len(t):
         reposition = (
             f"Repositionner environ {plural(move_n, 'scooter')} vers les zones en tension",
-            f"Les zones {names(t)} totalisent {fr(tension_dep)} départs/jour pour seulement "
+            f"Les zones {names(t)} ont généré {plural(int(tension_dep), 'départ')} sur la période pour seulement "
             f"{fr(tension_stock, 1)} scooters disponibles en moyenne. À l'inverse, {names(s)} "
-            f"immobilisent {fr(surplus_stock, 1)} scooters pour {fr(s['departures'].sum())} départs/jour. "
+            f"immobilisent {fr(surplus_stock, 1)} scooters pour {departures_text(s)}. "
             f"Le volume exact est à calibrer sur plusieurs semaines.",
         )
     else:
         reposition = (
             "Surveiller les zones en surplus",
             f"{names(s)} immobilisent {fr(surplus_stock, 1)} scooters disponibles pour "
-            f"{fr(s['departures'].sum())} départs/jour. La période observée est encore trop courte pour "
+            f"{departures_text(s)}. La période observée est encore trop courte pour "
             f"désigner des zones en tension vers lesquelles les déplacer.",
         )
+
+    n_other, n_other_long = len(k["other_idle"]), len(k["other_idle_long"])
+    other_long_text = (
+        f", dont {n_other_long} sans avoir bougé depuis au moins {IDLE_HOURS} h" if n_other_long else ""
+    )
 
     recos = [
         (
@@ -330,8 +343,8 @@ def render(k: dict) -> str:
         reposition,
         (
             "Traiter les désactivations hors batterie",
-            f"{len(k['other_idle'])} scooters sont désactivés avec une batterie correcte, dont "
-            f"{len(k['other_idle_long'])} depuis au moins {IDLE_HOURS} h. Ce motif pèse "
+            f"{plural(n_other, 'scooter')} désactivé{'s' if n_other > 1 else ''} avec une batterie "
+            f"correcte au dernier relevé{other_long_text}. Ce motif pèse "
             f"{pct(avg.n_disabled_other / fleet)} de la flotte en moyenne : c'est une capacité "
             f"immobilisée que les seuls changements de batterie ne récupèrent pas. Une revue de leur "
             f"statut (panne, maintenance, véhicule à récupérer) est à prévoir.",

@@ -11,9 +11,13 @@ comparaison), construite uniquement à partir du flux public **GBFS** de l'opér
 - **YEGO désactive tout scooter sous 15 % de batterie.** Aucun véhicule actif sous ce seuil, dans
   les deux villes. Les véhicules désactivés se divisent donc en deux groupes : la file d'attente
   des changements de batterie, et les désactivations pour un autre motif (maintenance, etc.).
-  Ce dernier groupe, invisible si l'on ne regarde que la batterie, pèse environ 10 % de la flotte.
+  Ce dernier groupe, invisible si l'on ne regarde que la batterie, pèse environ 11 % de la flotte
+  niçoise, avec un socle d'une vingtaine de scooters immobiles toute la nuit.
 - **Les changements de batterie sont détectables depuis l'extérieur** : même véhicule, même
-  emplacement, batterie qui passe par exemple de 7 % à 92 % et véhicule réactivé.
+  emplacement, batterie qui remonte (21 % → 91 % en moyenne) et véhicule réactivé.
+- **La tournée batterie arrive après le pic du soir.** Le 11 octobre à Nice, 16 scooters étaient
+  bloqués faute de batterie au pic de 19h (58 départs) ; 50 des 57 changements ont eu lieu entre
+  20h et 2h.
 - **Offre et demande par quartier** : stock moyen de scooters disponibles et départs observés par
   zone d'environ 500 m, nommées via OpenStreetMap.
 

@@ -128,7 +128,7 @@ def chart_departures(dep: pd.DataFrame) -> str:
     style_axes(ax)
     labels = [f"{h:%H}h" for h in dep["hour_local"]]
     ax.bar(range(len(dep)), dep["departures"], color=BLUE, width=0.72, edgecolor=SURFACE, linewidth=0.8)
-    step = max(1, len(dep) // 8)
+    step = max(1, -(-len(dep) // 6))  # au plus ~6 libelles, sinon ils se chevauchent
     ax.set_xticks(range(0, len(dep), step), labels[::step])
     # Libelle direct sur la seule valeur max.
     if len(dep):
@@ -186,7 +186,18 @@ def build() -> dict:
         where o.city = $city and o.track_id is not null
           and s.seconds_since_previous <= 360""", **p).iloc[0].rate
 
-    # Recommandation 1 : file d'attente batterie, par zone.
+    # Recommandation 1 : calage de la tournee batterie par rapport au pic de demande.
+    hourly = q(con, """
+        with f as (select hour_local, avg_disabled_battery, avg_listed from fct_fleet_hourly where city = $city),
+        s as (select date_trunc('hour', snapshot_at_local) as hour_local, count(*) as swaps
+              from fct_battery_swaps where city = $city and is_confirmed group by 1),
+        d as (select date_trunc('hour', last_seen_local) as hour_local, count(*) as departures
+              from fct_vehicle_stays where city = $city and is_departure group by 1)
+        select f.*, coalesce(s.swaps, 0) as swaps, coalesce(d.departures, 0) as departures
+        from f left join s using (hour_local) left join d using (hour_local)
+        order by hour_local""", **p)
+
+    # File d'attente batterie, par zone (au dernier releve).
     battery_queue = q(con, """
         select zone_id, count(*) as n, avg(lat) as lat, avg(lon) as lon
         from stg_vehicle_snapshots
@@ -246,6 +257,7 @@ def build() -> dict:
     return dict(
         window=window, hours_observed=hours_observed, snap=snap, avg=avg, last=last,
         departures_total=departures_total, dep_hourly=dep_hourly, swaps=swaps, tracking_rate=tracking_rate,
+        hourly=hourly,
         battery_queue=battery_queue.assign(n=lambda d: d.n.astype(int)),
         battery_queue_total=battery_queue_total,
         tension=tension, surplus=surplus, other_idle=other_idle, other_idle_long=other_idle_long,
@@ -286,6 +298,49 @@ def plural(n: int, word: str) -> str:
     return f"{n} {word}{'s' if n > 1 else ''}"
 
 
+def battery_timing_reco(k: dict) -> tuple[str, str]:
+    """Compare le pic de demande et la periode ou les batteries sont changees."""
+    h = k["hourly"]
+    # Premiere et derniere heures de collecte sont partielles : exclues du choix du pic.
+    full = h.iloc[1:-1] if len(h) > 2 else h
+    peak = full.loc[full["departures"].idxmax()]
+    queue_at_peak = peak["avg_disabled_battery"]
+    n_swaps = int(h["swaps"].sum())
+
+    if n_swaps == 0 or queue_at_peak < 3:
+        bq, total = k["battery_queue"], k["battery_queue_total"]
+        return (
+            "Cibler la tournée batterie par zone",
+            f"{plural(total, 'scooter')} désactivé{'s' if total > 1 else ''} sous {DISABLE_BATTERY_PCT} % au "
+            f"dernier relevé, principalement à {names(bq)}.",
+        )
+
+    # Fenetre qui concentre 80 % des changements de batterie.
+    cum = h["swaps"].cumsum() / n_swaps
+    start = h.loc[(cum >= 0.10).idxmax(), "hour_local"]
+    end = h.loc[(cum >= 0.90).idxmax(), "hour_local"]
+    in_window = h[(h["hour_local"] >= start) & (h["hour_local"] <= end)]["swaps"].sum()
+    floor = h["avg_disabled_battery"].min()
+    cleared = h.loc[(h["avg_disabled_battery"] <= floor + 0.5).idxmax(), "hour_local"]
+    after_peak = start > peak["hour_local"]
+
+    timing = (
+        f"L'essentiel des changements ({fr(in_window)} sur {n_swaps}) a eu lieu entre "
+        f"{start:%H}h et {end + pd.Timedelta(hours=1):%H}h, "
+        + ("après ce pic" if after_peak else "pendant ou avant ce pic")
+        + f", et la file n'est retombée à son minimum qu'à {cleared:%H}h."
+    )
+    return (
+        "Avancer la tournée batterie avant le pic du soir" if after_peak
+        else "Concentrer la tournée batterie avant les pics de demande",
+        f"Au pic de demande ({peak['hour_local']:%H}h, {plural(int(peak['departures']), 'départ')}), "
+        f"{fr(queue_at_peak)} scooters étaient indisponibles faute de batterie "
+        f"({pct(queue_at_peak / peak['avg_listed'])} de la flotte listée). {timing} Avancer cette tournée "
+        f"de deux heures remettrait ces scooters en circulation au moment où la demande est la plus forte. "
+        f"À confirmer sur plusieurs soirées.",
+    )
+
+
 def departures_text(df: pd.DataFrame) -> str:
     n = int(round(df["departures"].sum()))
     return "aucun départ" if n == 0 else plural(n, "départ")
@@ -306,9 +361,6 @@ def render(k: dict) -> str:
     tension_dep = t["departures"].sum()
     tension_stock = t["stock"].sum()
     move_n = int(max(1, min(surplus_stock - len(s), tension_dep - tension_stock)))
-
-    bq, bq_total = k["battery_queue"], k["battery_queue_total"]
-    bq_top = int(bq["n"].sum())
 
     if len(t):
         reposition = (
@@ -332,14 +384,7 @@ def render(k: dict) -> str:
     )
 
     recos = [
-        (
-            "Vider la file d'attente batterie en priorité",
-            f"{plural(bq_total, 'scooter')} désactivé{'s' if bq_total > 1 else ''} sous {DISABLE_BATTERY_PCT} % "
-            f"de batterie au dernier relevé ({pct(bq_total / last.n_listed)} de la flotte listée). "
-            f"Les zones les plus chargées ({names(bq)}) en regroupent {bq_top} : une tournée ciblée de "
-            f"changement de batterie y rend des véhicules disponibles plus vite qu'un passage réparti "
-            f"sur toute la ville.",
-        ),
+        battery_timing_reco(k),
         reposition,
         (
             "Traiter les désactivations hors batterie",
@@ -401,8 +446,8 @@ def render(k: dict) -> str:
   <div class="tiles">
     <div class="tile"><div class="v">{fr(fleet)}</div><div class="l">scooters listés en moyenne
       (hors véhicules en location)</div></div>
-    <div class="tile"><div class="v">{pct(unavailable / fleet)}</div><div class="l">désactivés en moyenne :
-      {pct(avg.n_disabled_battery / fleet)} batterie, {pct(avg.n_disabled_other / fleet)} autre motif</div></div>
+    <div class="tile"><div class="v">{pct(unavailable / fleet, 1)}</div><div class="l">désactivés en moyenne :
+      {pct(avg.n_disabled_battery / fleet, 1)} batterie, {pct(avg.n_disabled_other / fleet, 1)} autre motif</div></div>
     <div class="tile"><div class="v">{fr(k['departures_total'])}</div><div class="l">départs observés
       (locations ou retraits terrain)</div></div>
     <div class="tile"><div class="v">{len(k['swaps'])}</div><div class="l">changements de batterie détectés

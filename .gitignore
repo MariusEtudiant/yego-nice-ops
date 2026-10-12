@@ -20,3 +20,7 @@ Thumbs.db
 transform/target/
 transform/logs/
 transform/dbt_packages/
+
+# Recalcules a chaque execution (deja inclus dans data/compact/)
+data/tracks/
+reports/*.html

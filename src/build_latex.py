@@ -330,7 +330,7 @@ PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \setlength{\textfloatsep}{10pt}
 
 % Replace with your full name.
-\newcommand{\myname}{Marius}
+\newcommand{\myname}{Marius Casamian}
 """
 
 BODY = r"""

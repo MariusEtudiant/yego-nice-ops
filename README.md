@@ -4,7 +4,7 @@ Analyse opérationnelle de la flotte de scooters électriques **YEGO à Nice** (
 comparaison), construite uniquement à partir du flux public **GBFS** de l'opérateur.
 
 **Livrables :**
-- [rapport détaillé en anglais](reports/yego_nice_report.tex) (LaTeX, 5 pages : méthode, résultats,
+- [rapport détaillé en anglais](reports/yego_nice_report.tex) (LaTeX, 3 pages : méthode, résultats,
   recommandations, limites), généré par [`src/build_latex.py`](src/build_latex.py) ;
 - [note d'analyse d'une page en français](reports/note_yego_nice.pdf).
 

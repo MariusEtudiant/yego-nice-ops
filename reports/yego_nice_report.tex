@@ -2,128 +2,89 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage[margin=2.3cm]{geometry}
+\usepackage[margin=2cm]{geometry}
 \usepackage{amsmath}
 \usepackage{booktabs}
 \usepackage{xcolor}
+\usepackage{enumitem}
 \usepackage{pgfplots}
 \usepgfplotslibrary{groupplots}
 \pgfplotsset{compat=1.18}
-\usepackage[font=small,labelfont=bf]{caption}
+\usepackage[font=small,labelfont=bf,skip=4pt]{caption}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{yblue}{HTML}{2A78D6}
 \definecolor{yorange}{HTML}{EB6834}
 \definecolor{yaqua}{HTML}{1BAF7A}
 
+\setlist{itemsep=2pt, topsep=3pt}
+\setlength{\textfloatsep}{10pt}
+
 % Replace with your full name.
 \newcommand{\myname}{Marius}
 
-\title{Monitoring the YEGO scooter fleet in Nice\\with public GBFS data}
-\author{\myname\\[2pt]\small Application for the Data Analyst -- Operations position (V.I.E.\ 246717)}
-\date{12 October 2026}
-
 \begin{document}
-\maketitle
+
+\begin{center}
+  {\Large\bfseries Monitoring the YEGO scooter fleet in Nice with public GBFS data}\\[4pt]
+  \myname\ --- application for the Data Analyst -- Operations position (V.I.E.\ 246717)\\
+  12 October 2026 \quad $\cdot$ \quad Code and data: \url{https://github.com/MariusEtudiant/yego-nice-ops}
+\end{center}
 
 \begin{abstract}
-YEGO publishes the position and battery level of its shared electric scooters in real time through
-the General Bikeshare Feed Specification (GBFS). I collected this feed every two minutes for Nice and
-Barcelona from Sunday 11 October at 18:23 to Monday 12 October at 08:32 (426 snapshots for Nice), rebuilt the movements of
-each scooter even though the feed anonymises vehicle identifiers, and computed operational indicators
-with a dbt pipeline. Three findings stand out for Nice: (i) YEGO disables every scooter below
-15\% battery; (ii) at the evening demand peak (19h), 16 scooters were waiting for a battery swap, while 50 of the 57 swaps I detected happened between 20h and 02h, that is, after the peak; (iii) about 11.2\% of the fleet is disabled for
-reasons other than battery. I finish with three recommendations and with the limits of a study based
-on a single evening and night.
+\noindent YEGO publishes the position and battery level of its scooters in real time through the
+General Bikeshare Feed Specification (GBFS). I collected this feed every two minutes in Nice and
+Barcelona from Sunday 11 October at 18:23 to Monday 12 October at 08:32 (426 snapshots for Nice) and computed operational
+indicators with a dbt pipeline. Three findings stand out for Nice: (i) YEGO disables every scooter
+below 15\% battery; (ii) at the evening demand peak (19h), 16 scooters were waiting for a battery swap, while 50 of the 57 swaps I detected happened between 20h and 02h, that is, after the peak; (iii) about 11.2\% of the fleet is disabled
+for reasons other than battery.
 \end{abstract}
 
-\section{Introduction}
+\section{Data and method}
 
-The job offer describes an analyst who helps the Operations team understand vehicle availability,
-battery swaps, repositioning and data quality. Before applying, I wanted to see how much of this can
-already be measured from the outside, using only the public data that YEGO publishes. I focused on
-three questions:
-\begin{enumerate}
-  \item How available is the fleet, and why are some scooters not available?
-  \item When are batteries swapped compared to when people want to ride?
-  \item Where is the supply of scooters not aligned with the demand?
-\end{enumerate}
-The code, the dbt models and the collected data are available at \url{https://github.com/MariusEtudiant/yego-nice-ops}.
+\textbf{Data.} For every scooter that is parked and not rented, the feed \cite{gbfs} gives its
+position, battery level, and two flags, \texttt{is\_reserved} and \texttt{is\_disabled}. A scooter
+being ridden is not listed. A small Python collector stores each snapshot as a Parquet file; over the
+14 hours studied here it had no interruption. The feed refreshes positions about every four
+minutes, which is the real time resolution of the study.
 
-\section{Data}
-
-The GBFS feed \cite{gbfs} gives, for every scooter that is parked and not rented, its position,
-battery level (in percent and in remaining range), type, and two flags: \texttt{is\_reserved} and
-\texttt{is\_disabled}. A scooter that is being ridden is not listed. I wrote a small Python collector
-that downloads the feed every two minutes for Nice and for Barcelona (YEGO's home city) and stores
-each snapshot as a Parquet file. Over the 14 hours studied here the collection had
-no interruption. In practice the feed itself refreshes the positions about every four
-minutes, so this is the real time resolution of the study. Both cities only contain electric mopeds.
-
-\section{Method}
-
-\subsection{The identifier problem}
-
-The first surprise was that the \texttt{bike\_id} field is regenerated at every request. Comparing
-two snapshots taken four minutes apart, no identifier was shared, although 113 scooters were at
-exactly the same coordinates. This is a privacy measure allowed by GBFS, but it means that a scooter
-cannot be followed through its identifier, which is needed for durations, departures and battery
-swaps.
-
-\subsection{Rebuilding vehicle tracks}
-
-I rebuilt a stable identifier by matching the scooters of two consecutive snapshots. A pair
-$(i,j)$ is a candidate if both scooters have the same type and are less than 15\,m apart. Its cost is
+\textbf{Anonymised identifiers.} The \texttt{bike\_id} field is regenerated at every request: two
+snapshots four minutes apart shared no identifier, although 113 scooters had not moved at all. To
+follow scooters anyway, I match the scooters of two consecutive snapshots. A pair $(i,j)$ is a
+candidate if both have the same type and are less than 15\,m apart, with cost
 \begin{equation}
   c_{ij} = d_{ij} + \lambda\,\lvert b_i - b_j \rvert, \qquad \lambda = 0.5\ \text{m per battery point},
 \end{equation}
-where $d_{ij}$ is the distance in metres and $b$ the battery level. I then choose the one-to-one
-matching with the lowest total cost, using the Hungarian algorithm \cite{kuhn1955}. To keep it fast
-on the 1{,}700 scooters of Barcelona, the problem is solved separately for each group of scooters
-that are close to each other. A second pass accepts jumps of up to 150\,m when the battery is
-almost unchanged (at most 2 points), which handles GPS noise.
+where $d_{ij}$ is the distance and $b$ the battery level. I keep the one-to-one matching with the
+lowest total cost (Hungarian algorithm \cite{kuhn1955}), plus a second pass for GPS jumps up to
+150\,m when the battery is unchanged. A simple nearest-neighbour rule, my first attempt, broke about
+10\% of the tracks when scooters are parked side by side. With the assignment, 99.7\% of the
+observations are linked to a scooter of the previous snapshot.
 
-A simple nearest-neighbour rule was my first attempt, but it failed when several scooters are
-parked side by side: GPS noise swaps the neighbours and about 10\% of the tracks were broken. With
-the assignment approach, 99.7\% of the observations are linked to a scooter of the previous
-snapshot; the rest are new arrivals.
-
-\subsection{Events and zones}
-
-From the tracks I derive three events. A \emph{departure} is a scooter that disappears from the
-feed (it was rented, or picked up by the staff). An \emph{arrival} is a scooter that appears. A
-\emph{battery swap} is a rise of at least 20 battery points on the same scooter; I only keep it if
-the scooter was disabled just before or did not move more than 5\,m. To study zones, the city is
-divided into cells of about 500\,m, named with OpenStreetMap \cite{nominatim}.
-
-\subsection{Pipeline and data quality}
-
-The data flows from the Parquet files into dbt models running on DuckDB \cite{duckdb}: two staging
-models and four marts (fleet state per hour, vehicle stays, battery swaps, supply and demand per
-zone). The pipeline has data tests on null values, accepted values, coordinates inside the service
-area, gaps in the collection and the battery rule described below. In the last run,
-16 tests passed, 1 gave a warning and 0 failed. The warning
-is a real finding: one Barcelona scooter is published at latitude 0 and longitude 0 in every
-snapshot. It is excluded from the indicators but still reported.
+\textbf{Events and quality checks.} A \emph{departure} is a scooter that disappears from the feed
+(rented, or picked up by the staff). A \emph{battery swap} is a rise of at least 20 battery points on
+the same scooter, kept only if it was disabled just before or did not move. Zones are cells of about
+500\,m named with OpenStreetMap \cite{nominatim}. Everything is modelled with dbt on DuckDB
+\cite{duckdb}, with data tests on missing values, positions outside the service area, gaps in the
+collection and the battery rule (16 passed, 1 warning, 0
+failed). The warning is a real finding: one Barcelona scooter is published at latitude 0,
+longitude 0 in every snapshot.
 
 \section{Results}
 
-\subsection{Fleet availability}
-
-On average 234 scooters were listed in Nice, of which 84\% were available
-(Figure~\ref{fig:fleet}). 14.7\% were disabled: 3.5\% because of their
-battery and 11.2\% for another reason. No enabled scooter ever had a battery below
-15\%, which shows that YEGO automatically disables scooters under this threshold. The same 15\% rule holds in Barcelona, where the fleet is about 7 times larger.
-The ``other reason'' group behaves differently: it has a stable base of about 22
-scooters, and it rises to 35 around 21h, which may correspond to scooters
-being handled during the evening operations.
+\textbf{Fleet availability.} On average 234 scooters were listed in Nice and 84\%
+were available (Figure~\ref{fig:fleet}). 14.7\% were disabled: 3.5\% because of
+their battery and 11.2\% for another reason. No enabled scooter ever had less than
+15\% battery, so YEGO disables scooters under this threshold. The ``other reason'' group has a
+stable base of about 22 scooters and rises to 35 around 21h,
+during the evening operations. Barcelona, with about 1,734 scooters, follows the same 15\% rule and has very similar shares: 82\% available, 6\% disabled for battery and 11\% for another reason.
 
 
 \begin{figure}[ht]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
-        ybar stacked, bar width=8pt, width=\linewidth, height=5.4cm,
+        ybar stacked, bar width=8pt, width=\linewidth, height=4.4cm,
         ymin=0, ymax=267, xmin=-0.6, xmax=14.6,
         xtick={0,...,14}, xticklabels={18h,19h,20h,21h,22h,23h,00h,01h,02h,03h,04h,05h,06h,07h,08h},
         tick label style={font=\scriptsize}, ylabel={Scooters (hourly mean)},
@@ -143,27 +104,26 @@ being handled during the evening operations.
 \end{figure}
 
 
-\subsection{Battery swaps and demand}
-
-I detected 57 battery swaps in Nice. In 53 of them the scooter was disabled just before, and the battery went from 21\% to 91\% on average. Figure~\ref{fig:timing} puts demand and battery operations on the same time axis. The busiest hour was 19h with 58 departures. At that moment 16 scooters were disabled because of their battery. Swaps were concentrated between 20h and 02h (50 of 57), and the queue only reached its minimum at 02h. In other words, the swap round worked well, but it started after the moment when the scooters were most needed. The morning peak looks different: at 07h there were 41 departures while only 3 scooters were waiting for a battery, because the queue had been cleared during the night.
+\textbf{Battery swaps and demand.} I detected 57 battery swaps in Nice. In 53 of them the scooter was disabled just before, and the battery went from 21\% to 91\% on average. Figure~\ref{fig:timing} puts demand and battery operations on the same time axis. The busiest hour was 19h with 58 departures. At that moment 16 scooters were disabled because of their battery. Swaps were concentrated between 20h and 02h (50 of 57), and the queue only reached its minimum at 02h. In other words, the swap round worked well, but it started after the moment when the scooters were most needed. The morning peak looks different: at 07h there were 41 departures while only 3 scooters were waiting for a battery, because the queue had been cleared during the night.
 
 
 \begin{figure}[ht]
   \centering
   \begin{tikzpicture}
     \begin{groupplot}[
-        group style={group size=1 by 3, vertical sep=0.45cm, xticklabels at=edge bottom},
-        width=\linewidth, height=3.5cm, xmin=-0.6, xmax=14.6,
+        group style={group size=1 by 3, vertical sep=0.7cm, xticklabels at=edge bottom},
+        title style={font=\scriptsize, at={(0,1)}, anchor=south west, inner sep=1pt},
+        width=\linewidth, height=2.9cm, xmin=-0.6, xmax=14.6,
         xtick={0,...,14}, xticklabels={18h,19h,20h,21h,22h,23h,00h,01h,02h,03h,04h,05h,06h,07h,08h}, ymin=0,
         tick label style={font=\scriptsize}, ylabel style={font=\scriptsize, align=center},
         axis x line*=bottom, axis y line*=left, ymajorgrids, grid style={black!10}]
-      \nextgroupplot[ybar, bar width=8pt, ymax=71, ylabel={Departures\\per hour}]
+      \nextgroupplot[ybar, bar width=8pt, ymax=71, title={Departures per hour}]
         \addplot[fill=yblue, draw=none] coordinates {(0,22.00) (1,58.00) (2,33.00) (3,43.00) (4,28.00) (5,25.00) (6,16.00) (7,15.00) (8,8.00) (9,5.00) (10,10.00) (11,5.00) (12,16.00) (13,41.00) (14,21.00)};
         \draw[densely dashed, black!50] (axis cs:1,0) -- (axis cs:1,70.6);
-      \nextgroupplot[ymax=20, ylabel={Scooters waiting\\for a battery}]
+      \nextgroupplot[ymax=20, title={Scooters waiting for a battery (hourly mean)}]
         \addplot[yorange, thick, mark=*, mark size=1.3pt] coordinates {(0,15.53) (1,16.00) (2,16.00) (3,13.57) (4,12.63) (5,10.50) (6,10.00) (7,6.97) (8,3.00) (9,3.00) (10,3.00) (11,3.00) (12,3.00) (13,3.00) (14,3.00)};
         \draw[densely dashed, black!50] (axis cs:1,0) -- (axis cs:1,20.2);
-      \nextgroupplot[ybar, bar width=8pt, ymax=19, ylabel={Battery swaps\\per hour}]
+      \nextgroupplot[ybar, bar width=8pt, ymax=19, title={Battery swaps per hour}]
         \addplot[fill=yaqua, draw=none] coordinates {(0,2.00) (1,1.00) (2,8.00) (3,8.00) (4,7.00) (5,7.00) (6,5.00) (7,15.00) (8,0.00) (9,1.00) (10,0.00) (11,1.00) (12,0.00) (13,2.00) (14,0.00)};
         \draw[densely dashed, black!50] (axis cs:1,0) -- (axis cs:1,19.0);
     \end{groupplot}
@@ -174,11 +134,8 @@ I detected 57 battery swaps in Nice. In 53 of them the scooter was disabled just
 \end{figure}
 
 
-\subsection{Supply and demand by zone}
-
-Table~\ref{tab:zones} compares the mean number of available scooters with the departures observed
-in each zone. Some central zones have many departures and few scooters, while others keep many
-scooters that are almost never rented.
+\textbf{Supply and demand by zone.} Some central zones have many departures and few scooters, while
+others keep scooters that are almost never rented (Table~\ref{tab:zones}).
 
 
 \begin{table}[ht]
@@ -202,30 +159,6 @@ scooters that are almost never rented.
 \end{table}
 
 
-\subsection{Comparison with Barcelona}
-
-Table~\ref{tab:cities} shows that the two cities have very similar shares of available and disabled
-scooters, even though the fleets have very different sizes.
-
-
-\begin{table}[ht]
-  \centering
-  \small
-  \begin{tabular}{lrrrrrr}
-    \toprule
-    City & Listed fleet & Available & \multicolumn{2}{c}{Disabled} & Departures per & Battery swaps \\
-    \cmidrule(lr){4-5}
-         &              &           & battery & other & scooter per hour & per hour \\
-    \midrule
-    Nice & 234 & 84\% & 3\% & 11\% & 0.104 & 4.0 \\
-    Barcelona & 1,734 & 82\% & 6\% & 11\% & 0.104 & 33.6 \\
-    \bottomrule
-  \end{tabular}
-  \caption{Nice and Barcelona over the same period (means over all snapshots).}
-  \label{tab:cities}
-\end{table}
-
-
 \section{Recommendations}
 
 \begin{enumerate}
@@ -234,40 +167,26 @@ scooters, even though the fleets have very different sizes.
   \item \textbf{Review the scooters disabled for reasons other than battery.} At the last snapshot, 23 scooters were disabled with a correct battery, and 20 of them did not move for at least 6 hours. This group is 11\% of the fleet on average and it is not reduced by battery swaps. Checking why they are disabled (breakdown, maintenance, vehicle to collect) could free part of this capacity.
 \end{enumerate}
 
-\section{Limitations}
+\section{Limitations and next steps}
 
-\begin{itemize}
-  \item The study covers one evening and one night. The patterns described here must be confirmed
-        over several weeks before taking decisions; the collector is still running for this reason.
-  \item A departure can be a rental or a pick-up by the staff, which the public feed does not
-        distinguish.
-  \item Rides shorter than the refresh period of the feed (about four minutes) are not visible.
-  \item For scooters already parked when the collection started, parking durations are
-        underestimated.
-  \item The track rebuilding can still make mistakes in very dense parking spots.
-\end{itemize}
+The study covers one evening and one night, so these patterns must be confirmed over several weeks
+(the collector is still running). A departure can be a rental or a pick-up by the staff, rides shorter
+than four minutes are invisible, and the tracking can still make mistakes in dense parking spots.
+With YEGO's internal data, I would first join departures with real rentals to measure true demand,
+then measure the delay between a scooter being disabled under 15\% and its return to service,
+and finally test the recommendations on a few zones against similar zones left unchanged.
 
-\section{What I would do next with internal data}
-
-\begin{enumerate}
-  \item \textbf{Separate rentals from operations.} Joining the observed departures with the real
-        rentals would give the true demand and a utilisation rate per zone.
-  \item \textbf{Measure the battery swap delay.} The time between the moment a scooter is disabled
-        under 15\% and the moment it is back in service, per zone and per team, is the indicator
-        that drives availability.
-  \item \textbf{Test the recommendations.} For example, move scooters at night in a few zones only,
-        and compare their morning departures with similar zones where nothing was changed.
-\end{enumerate}
-
+{\small
 \begin{thebibliography}{9}
-\bibitem{gbfs} MobilityData. \emph{General Bikeshare Feed Specification (GBFS)}, version 2.3.
+\setlength{\itemsep}{0pt}
+\bibitem{gbfs} MobilityData. \emph{General Bikeshare Feed Specification (GBFS)}, v2.3.
   \url{https://github.com/MobilityData/gbfs}.
 \bibitem{kuhn1955} H.~W. Kuhn. The Hungarian method for the assignment problem.
   \emph{Naval Research Logistics Quarterly}, 2(1--2):83--97, 1955.
 \bibitem{duckdb} M.~Raasveldt and H.~M\"uhleisen. DuckDB: an embeddable analytical database.
-  In \emph{Proceedings of the 2019 International Conference on Management of Data (SIGMOD)}, 2019.
-\bibitem{nominatim} OpenStreetMap contributors. \emph{Nominatim}, reverse geocoding service.
-  \url{https://nominatim.org}.
+  \emph{SIGMOD}, 2019.
+\bibitem{nominatim} OpenStreetMap contributors. \emph{Nominatim}. \url{https://nominatim.org}.
 \end{thebibliography}
+}
 
 \end{document}

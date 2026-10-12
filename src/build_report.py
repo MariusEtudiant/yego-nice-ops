@@ -35,7 +35,7 @@ ZONE_NAMES_CACHE = ROOT / "data" / "static" / "zone_names.json"
 EDGE = pathlib.Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 
 CITY = "nice"
-REPO_URL = "github.com/Mariuscsm06/yego-nice-ops"
+REPO_URL = "github.com/MariusEtudiant/yego-nice-ops"
 DISABLE_BATTERY_PCT = 15
 IDLE_HOURS = 6
 
@@ -188,7 +188,9 @@ def build() -> dict:
 
     # Recommandation 1 : calage de la tournee batterie par rapport au pic de demande.
     hourly = q(con, """
-        with f as (select hour_local, avg_disabled_battery, avg_listed from fct_fleet_hourly where city = $city),
+        with f as (select hour_local, avg_listed, avg_available, avg_reserved, avg_disabled_battery,
+                          avg_disabled_other
+                   from fct_fleet_hourly where city = $city),
         s as (select date_trunc('hour', snapshot_at_local) as hour_local, count(*) as swaps
               from fct_battery_swaps where city = $city and is_confirmed group by 1),
         d as (select date_trunc('hour', last_seen_local) as hour_local, count(*) as departures
@@ -298,16 +300,50 @@ def plural(n: int, word: str) -> str:
     return f"{n} {word}{'s' if n > 1 else ''}"
 
 
-def battery_timing_reco(k: dict) -> tuple[str, str]:
-    """Compare le pic de demande et la periode ou les batteries sont changees."""
-    h = k["hourly"]
+def battery_timing_facts(h: pd.DataFrame) -> dict | None:
+    """Compare le pic de demande et la periode ou les batteries sont changees.
+    Renvoie None quand il n'y a pas assez de matiere (pas de changement, file quasi vide au pic)."""
     # Premiere et derniere heures de collecte sont partielles : exclues du choix du pic.
     full = h.iloc[1:-1] if len(h) > 2 else h
     peak = full.loc[full["departures"].idxmax()]
-    queue_at_peak = peak["avg_disabled_battery"]
     n_swaps = int(h["swaps"].sum())
+    if n_swaps == 0 or peak["avg_disabled_battery"] < 3:
+        return None
 
-    if n_swaps == 0 or queue_at_peak < 3:
+    # Fenetre qui concentre 80 % des changements de batterie.
+    cum = h["swaps"].cumsum() / n_swaps
+    start = h.loc[(cum >= 0.10).idxmax(), "hour_local"]
+    end = h.loc[(cum >= 0.90).idxmax(), "hour_local"]
+    floor = h["avg_disabled_battery"].min()
+    return dict(
+        peak_hour=peak["hour_local"],
+        peak_departures=int(peak["departures"]),
+        queue_at_peak=peak["avg_disabled_battery"],
+        queue_share=peak["avg_disabled_battery"] / peak["avg_listed"],
+        n_swaps=n_swaps,
+        in_window=int(h[(h["hour_local"] >= start) & (h["hour_local"] <= end)]["swaps"].sum()),
+        start=start,
+        end=end + pd.Timedelta(hours=1),
+        cleared=h.loc[(h["avg_disabled_battery"] <= floor + 0.5).idxmax(), "hour_local"],
+        after_peak=start > peak["hour_local"],
+    )
+
+
+def reposition_facts(k: dict) -> dict:
+    t, s = k["tension"], k["surplus"]
+    surplus_stock, tension_dep, tension_stock = s["stock"].sum(), t["departures"].sum(), t["stock"].sum()
+    return dict(
+        surplus_stock=surplus_stock,
+        surplus_departures=int(round(s["departures"].sum())),
+        tension_departures=int(round(tension_dep)),
+        tension_stock=tension_stock,
+        move_n=int(max(1, min(surplus_stock - len(s), tension_dep - tension_stock))),
+    )
+
+
+def battery_timing_reco(k: dict) -> tuple[str, str]:
+    f = battery_timing_facts(k["hourly"])
+    if f is None:
         bq, total = k["battery_queue"], k["battery_queue_total"]
         return (
             "Cibler la tournée batterie par zone",
@@ -315,27 +351,18 @@ def battery_timing_reco(k: dict) -> tuple[str, str]:
             f"dernier relevé, principalement à {names(bq)}.",
         )
 
-    # Fenetre qui concentre 80 % des changements de batterie.
-    cum = h["swaps"].cumsum() / n_swaps
-    start = h.loc[(cum >= 0.10).idxmax(), "hour_local"]
-    end = h.loc[(cum >= 0.90).idxmax(), "hour_local"]
-    in_window = h[(h["hour_local"] >= start) & (h["hour_local"] <= end)]["swaps"].sum()
-    floor = h["avg_disabled_battery"].min()
-    cleared = h.loc[(h["avg_disabled_battery"] <= floor + 0.5).idxmax(), "hour_local"]
-    after_peak = start > peak["hour_local"]
-
     timing = (
-        f"L'essentiel des changements ({fr(in_window)} sur {n_swaps}) a eu lieu entre "
-        f"{start:%H}h et {end + pd.Timedelta(hours=1):%H}h, "
-        + ("après ce pic" if after_peak else "pendant ou avant ce pic")
-        + f", et la file n'est retombée à son minimum qu'à {cleared:%H}h."
+        f"L'essentiel des changements ({fr(f['in_window'])} sur {f['n_swaps']}) a eu lieu entre "
+        f"{f['start']:%H}h et {f['end']:%H}h, "
+        + ("après ce pic" if f["after_peak"] else "pendant ou avant ce pic")
+        + f", et la file n'est retombée à son minimum qu'à {f['cleared']:%H}h."
     )
     return (
-        "Avancer la tournée batterie avant le pic du soir" if after_peak
+        "Avancer la tournée batterie avant le pic du soir" if f["after_peak"]
         else "Concentrer la tournée batterie avant les pics de demande",
-        f"Au pic de demande ({peak['hour_local']:%H}h, {plural(int(peak['departures']), 'départ')}), "
-        f"{fr(queue_at_peak)} scooters étaient indisponibles faute de batterie "
-        f"({pct(queue_at_peak / peak['avg_listed'])} de la flotte listée). {timing} Avancer cette tournée "
+        f"Au pic de demande ({f['peak_hour']:%H}h, {plural(f['peak_departures'], 'départ')}), "
+        f"{fr(f['queue_at_peak'])} scooters étaient indisponibles faute de batterie "
+        f"({pct(f['queue_share'])} de la flotte listée). {timing} Avancer cette tournée "
         f"de deux heures remettrait ces scooters en circulation au moment où la demande est la plus forte. "
         f"À confirmer sur plusieurs soirées.",
     )
@@ -357,23 +384,20 @@ def render(k: dict) -> str:
     period = f"{w.start_at:%d/%m %Hh%M} → {w.end_at:%d/%m %Hh%M}"
 
     t, s = k["tension"], k["surplus"]
-    surplus_stock = s["stock"].sum()
-    tension_dep = t["departures"].sum()
-    tension_stock = t["stock"].sum()
-    move_n = int(max(1, min(surplus_stock - len(s), tension_dep - tension_stock)))
+    rf = reposition_facts(k)
 
     if len(t):
         reposition = (
-            f"Repositionner environ {plural(move_n, 'scooter')} vers les zones en tension",
-            f"Les zones {names(t)} ont généré {plural(int(tension_dep), 'départ')} sur la période pour seulement "
-            f"{fr(tension_stock, 1)} scooters disponibles en moyenne. À l'inverse, {names(s)} "
-            f"immobilisent {fr(surplus_stock, 1)} scooters pour {departures_text(s)}. "
+            f"Repositionner environ {plural(rf['move_n'], 'scooter')} vers les zones en tension",
+            f"Les zones {names(t)} ont généré {plural(rf['tension_departures'], 'départ')} sur la période pour "
+            f"seulement {fr(rf['tension_stock'], 1)} scooters disponibles en moyenne. À l'inverse, {names(s)} "
+            f"immobilisent {fr(rf['surplus_stock'], 1)} scooters pour {departures_text(s)}. "
             f"Le volume exact est à calibrer sur plusieurs semaines.",
         )
     else:
         reposition = (
             "Surveiller les zones en surplus",
-            f"{names(s)} immobilisent {fr(surplus_stock, 1)} scooters disponibles pour "
+            f"{names(s)} immobilisent {fr(rf['surplus_stock'], 1)} scooters disponibles pour "
             f"{departures_text(s)}. La période observée est encore trop courte pour "
             f"désigner des zones en tension vers lesquelles les déplacer.",
         )

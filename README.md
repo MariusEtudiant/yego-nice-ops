@@ -3,8 +3,10 @@
 Analyse opérationnelle de la flotte de scooters électriques **YEGO à Nice** (et Barcelone en
 comparaison), construite uniquement à partir du flux public **GBFS** de l'opérateur.
 
-**Livrable principal : [la note d'analyse d'une page](reports/note_yego_nice.pdf)**
-(disponibilité, file d'attente batterie, offre et demande par quartier, 3 recommandations).
+**Livrables :**
+- [rapport détaillé en anglais](reports/yego_nice_report.tex) (LaTeX, 5 pages : méthode, résultats,
+  recommandations, limites), généré par [`src/build_latex.py`](src/build_latex.py) ;
+- [note d'analyse d'une page en français](reports/note_yego_nice.pdf).
 
 ## Ce que montrent les données
 

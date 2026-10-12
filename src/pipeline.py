@@ -24,4 +24,5 @@ if __name__ == "__main__":
     # dbt build echoue sur un test en erreur ; les avertissements (trous, GPS aberrants) passent.
     step("dbt build", [str(DBT), "build", "--profiles-dir", "."], cwd=ROOT / "transform")
     step("Note d'analyse", [PY, "src/build_report.py"])
+    step("Rapport LaTeX (anglais)", [PY, "src/build_latex.py"])
     step("Export du jeu de donnees compact", [PY, "src/export_dataset.py"])

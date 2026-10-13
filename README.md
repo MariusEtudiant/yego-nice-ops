@@ -1,5 +1,7 @@
 # YEGO Nice — Operations Monitor
 
+[![ci](https://github.com/MariusEtudiant/yego-nice-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/MariusEtudiant/yego-nice-ops/actions/workflows/ci.yml)
+
 A data product on the YEGO shared e-scooter fleets of Nice and Barcelona, built only from the
 operator's public GBFS feed: collection through a REST API, dbt models with data quality tests,
 a star schema for a Power BI model, a FastAPI service with a web page, and CI on every push.

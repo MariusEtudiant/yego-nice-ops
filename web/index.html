@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YEGO Fleet Monitor</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2de;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8984;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --shortage: #e34948; --surplus: #2a78d6; --balanced: #b5b4ae;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --shortage: #e66767; --surplus: #3987e5; --balanced: #6b6a66;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--text-secondary); margin: 4px 0 0; }
+  .controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  select, input[type=range] { font: inherit; }
+  select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+           background: var(--surface-1); color: var(--text-primary); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 20px 0; }
+  .kpi, .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .kpi .label { color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .kpi .value { font-size: 28px; font-weight: 650; margin-top: 2px; }
+  .kpi .note { color: var(--text-muted); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 12px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card h2 { font-size: 15px; margin: 0 0 2px; }
+  .card p { margin: 0 0 10px; color: var(--text-secondary); font-size: 13px; }
+  #map { height: 420px; border-radius: 8px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .chart-box { position: relative; height: 420px; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 18px; }
+  a { color: var(--series-1); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>YEGO Fleet Monitor</h1>
+      <p class="sub">E-scooter availability, zone supply and demand, and battery swaps, from the public GBFS feed.</p>
+    </div>
+    <div class="controls">
+      <label>City <select id="city"></select></label>
+      <label>Hour <input id="hour" type="range" min="0" max="23" step="1"> <strong id="hour-label"></strong></label>
+    </div>
+  </header>
+
+  <section class="kpis">
+    <div class="kpi"><div class="label">Fleet available</div><div class="value" id="k-rate">–</div><div class="note">share of listed scooters rentable</div></div>
+    <div class="kpi"><div class="label">Waiting for a battery</div><div class="value" id="k-battery">–</div><div class="note">peak hourly average, scooters disabled under 15%</div></div>
+    <div class="kpi"><div class="label">Battery swaps 20h–02h</div><div class="value" id="k-swaps">–</div><div class="note">share of confirmed swaps done after the evening peak</div></div>
+    <div class="kpi"><div class="label">Zones in shortage</div><div class="value" id="k-short">–</div><div class="note">at the selected hour: demand but under one scooter</div></div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Supply and demand by zone</h2>
+      <p id="map-caption">Each circle is a ~500 m zone; size follows departures per day.</p>
+      <div id="map"></div>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--shortage)"></span>Shortage</span>
+        <span><span class="dot" style="background:var(--balanced)"></span>Balanced</span>
+        <span><span class="dot" style="background:var(--surplus)"></span>Surplus, no departures</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Fleet status by hour</h2>
+      <p>Average scooters listed in the feed, split by status (Europe/Paris time).</p>
+      <div class="chart-box"><canvas id="chart"></canvas></div>
+    </div>
+  </section>
+
+  <footer>Data: YEGO GBFS feed, collected every 2 minutes, 11–12 October 2026. API documentation: <a href="/docs">/docs</a>.</footer>
+</main>
+
+<script>
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const fmtPct = x => `${(100 * x).toFixed(0)}%`;
+const api = path => fetch(path).then(r => { if (!r.ok) throw new Error(`${path}: ${r.status}`); return r.json(); });
+
+let map, layer, chart, fleetHours = [];
+
+function initMap() {
+  map = L.map("map", { scrollWheelZoom: false });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18, attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+  layer = L.layerGroup().addTo(map);
+}
+
+async function loadCity(city) {
+  const [fleet, swaps] = await Promise.all([api(`/api/cities/${city}/fleet`), api(`/api/cities/${city}/swaps`)]);
+  fleetHours = [...new Set(fleet.map(f => f.local_hour))];
+  const listed = fleet.reduce((s, f) => s + f.avg_listed, 0);
+  const avail = fleet.reduce((s, f) => s + f.avg_available, 0);
+  document.getElementById("k-rate").textContent = fmtPct(avail / listed);
+  document.getElementById("k-battery").textContent = Math.max(...fleet.map(f => f.avg_disabled_battery)).toFixed(0);
+  const confirmed = swaps.reduce((s, h) => s + h.confirmed_swaps, 0);
+  const late = swaps.filter(h => h.local_hour >= 20 || h.local_hour < 2).reduce((s, h) => s + h.confirmed_swaps, 0);
+  document.getElementById("k-swaps").textContent = confirmed ? fmtPct(late / confirmed) : "–";
+  drawChart(fleet);
+  const hour = document.getElementById("hour");
+  if (!fleetHours.includes(+hour.value)) hour.value = fleetHours.includes(19) ? 19 : fleetHours[0];
+  await loadZones();
+}
+
+async function loadZones() {
+  const city = document.getElementById("city").value;
+  const hour = +document.getElementById("hour").value;
+  document.getElementById("hour-label").textContent = `${String(hour).padStart(2, "0")}h`;
+  const zones = await api(`/api/cities/${city}/zones?hour=${hour}`);
+  layer.clearLayers();
+  const colors = { shortage: css("--shortage"), surplus: css("--surplus"), balanced: css("--balanced") };
+  zones.forEach(z => {
+    L.circleMarker([z.lat, z.lon], {
+      radius: 4 + 3 * Math.sqrt(z.departures_per_day), color: css("--surface-1"), weight: 2,
+      fillColor: colors[z.status], fillOpacity: 0.85
+    }).bindTooltip(`<strong>${z.zone_name}</strong><br>${z.avg_available.toFixed(1)} scooters available<br>` +
+                   `${z.departures_per_day.toFixed(0)} departures, ${z.arrivals_per_day.toFixed(0)} arrivals per day`)
+      .addTo(layer);
+  });
+  document.getElementById("k-short").textContent = zones.filter(z => z.status === "shortage").length;
+  document.getElementById("map-caption").textContent = zones.length
+    ? `${zones.length} zones at ${String(hour).padStart(2, "0")}h. Circle size follows departures per day.`
+    : `No observation at ${String(hour).padStart(2, "0")}h: the collection covers ${fleetHours.length} hours.`;
+  if (zones.length) map.fitBounds(L.latLngBounds(zones.map(z => [z.lat, z.lon])), { padding: [20, 20] });
+}
+
+function drawChart(fleet) {
+  const labels = fleet.map(f => f.hour_local.slice(11, 13) + "h");
+  const series = [
+    ["Available", fleet.map(f => f.avg_available), "--series-1"],
+    ["Waiting for battery", fleet.map(f => f.avg_disabled_battery), "--series-2"],
+    ["Disabled, other reason", fleet.map(f => f.avg_disabled_other), "--series-4"],
+  ];
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("chart"), {
+    type: "bar",
+    data: { labels, datasets: series.map(([label, data, color]) => ({
+      label, data, backgroundColor: css(color), borderColor: css("--surface-1"), borderWidth: 1,
+      borderRadius: 3, maxBarThickness: 26 })) },
+    options: {
+      maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "top", align: "start", labels: { color: css("--text-secondary"), boxWidth: 10 } },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(0)}` } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: css("--text-secondary") } },
+        y: { stacked: true, grid: { color: css("--border") }, ticks: { color: css("--text-secondary") },
+             title: { display: true, text: "scooters", color: css("--text-secondary") } }
+      }
+    }
+  });
+}
+
+(async () => {
+  initMap();
+  const cities = await api("/api/cities");
+  const select = document.getElementById("city");
+  select.innerHTML = cities.map(c => `<option value="${c.city}">${c.city_name}</option>`).join("");
+  select.addEventListener("change", () => loadCity(select.value));
+  document.getElementById("hour").addEventListener("input", loadZones);
+  await loadCity(select.value);
+})();
+</script>
+</body>
+</html>

@@ -7,6 +7,10 @@ model-paths: ["models"]
 test-paths: ["tests"]
 
 vars:
+  # Source du staging : "raw" (collecte locale complete) ou "compact" (data/compact, versionne, utilise par la CI)
+  source: raw
+  compact_glob: "../data/compact/*.parquet"
+  zone_names_path: "../data/static/zone_names.json"
   # Snapshots bruts du collecteur : data/raw/city=<ville>/date=<jour>/fbs_<epoch>.parquet
   raw_glob: "../data/raw/*/*/*.parquet"
   # Identifiants stables reconstruits par src/track_vehicles.py

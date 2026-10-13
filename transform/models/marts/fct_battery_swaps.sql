@@ -40,5 +40,6 @@ swaps as (
 
 select
     *,
+    hour(snapshot_at_local)                                            as local_hour,
     previous_is_disabled or moved_m <= {{ var("swap_max_move_m") }} as is_confirmed
 from swaps

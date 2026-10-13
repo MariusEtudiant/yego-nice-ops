@@ -30,9 +30,60 @@ models:
 
   - name: fct_fleet_hourly
     description: "Etat moyen de la flotte par ville et par heure."
+    columns:
+      - name: city
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_city')
+                field: city
+      - name: local_hour
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hour')
+                field: local_hour
 
   - name: fct_zone_hourly
     description: "Offre (vehicules disponibles) et demande (departs, arrivees) par zone de ~500 m et par heure."
+    columns:
+      - name: zone_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: local_hour
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hour')
+                field: local_hour
+
+  - name: dim_city
+    description: "Dimension ville (schema en etoile du modele Power BI)."
+    columns:
+      - name: city
+        tests: [unique, not_null]
+
+  - name: dim_zone
+    description: "Dimension zone de ~500 m, avec son centre et un nom de quartier quand il est connu."
+    columns:
+      - name: zone_id
+        tests: [unique, not_null]
+      - name: city
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_city')
+                field: city
+
+  - name: dim_hour
+    description: "Dimension heure locale (0 a 23) avec periode de la journee."
+    columns:
+      - name: local_hour
+        tests: [unique, not_null]
 
   - name: fct_vehicle_stays
     description: "Sejour d'un vehicule a un emplacement, reconstitue par le suivi de position (pas par identifiant)."
@@ -44,3 +95,16 @@ models:
 
   - name: fct_battery_swaps
     description: "Changements de batterie detectes : batterie qui remonte de 20 points ou plus sur place."
+    columns:
+      - name: zone_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: local_hour
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hour')
+                field: local_hour

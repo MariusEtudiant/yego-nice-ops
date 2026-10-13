@@ -1,6 +1,7 @@
 """
 Enchaine tout le traitement sur les donnees deja collectees :
-suivi des vehicules -> dbt build (modeles + tests) -> note d'analyse -> export compact.
+suivi des vehicules -> dbt build (modeles + tests) -> note d'analyse -> export compact
+-> export du schema en etoile (Power BI, API) -> script TMDL du modele Power BI.
 
     python src/pipeline.py
 """
@@ -26,3 +27,5 @@ if __name__ == "__main__":
     step("Note d'analyse", [PY, "src/build_report.py"])
     step("Rapport LaTeX (anglais)", [PY, "src/build_latex.py"])
     step("Export du jeu de donnees compact", [PY, "src/export_dataset.py"])
+    step("Export du schema en etoile (Power BI, API)", [PY, "src/export_bi.py"])
+    step("Modele Power BI (TMDL)", [PY, "powerbi/generate_tmdl.py"])

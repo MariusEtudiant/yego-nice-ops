@@ -1,0 +1,561 @@
+createOrReplace
+
+	expression DataFolder = "C:\Users\Marius\Desktop\yego-nice-ops\data\bi\" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+		lineageTag: 0035d1ab-4f25-5e9f-8464-b562f6817eac
+
+		annotation PBI_ResultType = Text
+
+	table dim_city
+		lineageTag: 7c543b10-97b0-5c15-a6d6-17cec51011fe
+
+		column city
+			dataType: string
+			lineageTag: 6b282fa5-e2a7-505e-a1c7-06ea86e738f3
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column city_name
+			dataType: string
+			dataCategory: City
+			lineageTag: 74951a5e-68f3-552b-a04b-d410cd6a5083
+			summarizeBy: none
+			sourceColumn: city_name
+
+			annotation SummarizationSetBy = Automatic
+
+		column country
+			dataType: string
+			dataCategory: Country
+			lineageTag: 0d4419d8-e43e-5eba-b7d9-8a88212d830c
+			summarizeBy: none
+			sourceColumn: country
+
+			annotation SummarizationSetBy = Automatic
+
+		column timezone
+			dataType: string
+			lineageTag: d788329e-9668-54c7-a128-979d4317e778
+			summarizeBy: none
+			sourceColumn: timezone
+
+			annotation SummarizationSetBy = Automatic
+
+		partition dim_city = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "dim_city.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	table dim_zone
+		lineageTag: f026be70-ffcc-5b78-a454-51432bc28e4c
+
+		column city
+			dataType: string
+			isHidden
+			lineageTag: 7a8db14f-dc5b-54a7-98a0-feb20227c0af
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_id
+			dataType: string
+			lineageTag: 2cbfd6ba-ea41-5140-9759-bf5afe9e1227
+			summarizeBy: none
+			sourceColumn: zone_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_name
+			dataType: string
+			lineageTag: 6bbe8a42-6817-59da-85b4-6651bef61858
+			summarizeBy: none
+			sourceColumn: zone_name
+
+			annotation SummarizationSetBy = Automatic
+
+		column has_name
+			dataType: boolean
+			lineageTag: 2a28f117-0980-503e-bd55-f04b4f57b739
+			summarizeBy: none
+			sourceColumn: has_name
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_lat
+			dataType: double
+			formatString: 0.00
+			dataCategory: Latitude
+			lineageTag: d04f992d-96a8-5789-a5cb-ea8698b2239b
+			summarizeBy: none
+			sourceColumn: zone_lat
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_lon
+			dataType: double
+			formatString: 0.00
+			dataCategory: Longitude
+			lineageTag: e2ee05fa-f77a-5fd4-b674-98126f365e5a
+			summarizeBy: none
+			sourceColumn: zone_lon
+
+			annotation SummarizationSetBy = Automatic
+
+		partition dim_zone = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "dim_zone.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	table dim_hour
+		lineageTag: 8d59a8ca-adcb-5b0b-a7f2-40f76c4386ca
+
+		column local_hour
+			dataType: int64
+			lineageTag: 7230a691-b2f0-5b83-9b0d-499842c7b7cf
+			summarizeBy: none
+			sourceColumn: local_hour
+
+			annotation SummarizationSetBy = Automatic
+
+		column hour_label
+			dataType: string
+			sortByColumn: local_hour
+			lineageTag: 5192bf3f-620e-5162-ad12-91686e44dcd7
+			summarizeBy: none
+			sourceColumn: hour_label
+
+			annotation SummarizationSetBy = Automatic
+
+		column day_period
+			dataType: string
+			lineageTag: 46ff9af7-c421-587e-826b-f396c9c3952c
+			summarizeBy: none
+			sourceColumn: day_period
+
+			annotation SummarizationSetBy = Automatic
+
+		partition dim_hour = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "dim_hour.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	table fct_fleet_hourly
+		lineageTag: b41f3668-2842-58b2-a5c8-e4d513492d1b
+
+		measure 'Listed Scooters' = AVERAGE ( fct_fleet_hourly[avg_listed] )
+			formatString: #,0
+			lineageTag: cd67e53c-36c0-5f24-9a58-e6d989c428df
+
+		measure 'Available Scooters' = AVERAGE ( fct_fleet_hourly[avg_available] )
+			formatString: #,0
+			lineageTag: e37094e3-4f42-5978-a763-4e4211638131
+
+		measure 'Availability Rate' = DIVIDE ( SUM ( fct_fleet_hourly[avg_available] ), SUM ( fct_fleet_hourly[avg_listed] ) )
+			formatString: 0.0%
+			lineageTag: 266b159c-79c0-5cc4-b5d4-c7ad67a3cb76
+
+		measure 'Waiting for Battery' = AVERAGE ( fct_fleet_hourly[avg_disabled_battery] )
+			formatString: #,0
+			lineageTag: 91331654-73e3-5ad6-9756-6891fb4bca40
+
+		measure 'Disabled Other Reason' = AVERAGE ( fct_fleet_hourly[avg_disabled_other] )
+			formatString: #,0
+			lineageTag: ce8b8d4a-f0a0-5605-b108-9cb6ed9cd343
+
+		measure 'Peak Battery Queue' =
+				MAXX (
+				    VALUES ( fct_fleet_hourly[hour_local] ),
+				    CALCULATE ( SUM ( fct_fleet_hourly[avg_disabled_battery] ) )
+				)
+			formatString: #,0
+			lineageTag: b13b42bf-635b-5272-aac0-a891dcd2b64f
+
+		measure 'Available vs Daily Average' = [Available Scooters] - CALCULATE ( [Available Scooters], REMOVEFILTERS ( dim_hour ) )
+			formatString: +#,0;-#,0;0
+			lineageTag: 73d4e8e4-1f5c-5ed7-a3d7-3a1ecb1b05c0
+
+		column city
+			dataType: string
+			isHidden
+			lineageTag: 4517ea47-f737-5e58-b7ff-21a11991d203
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column hour_local
+			dataType: dateTime
+			formatString: General Date
+			lineageTag: 4662936a-78b5-5252-b3d8-915bad7d7f31
+			summarizeBy: none
+			sourceColumn: hour_local
+
+			annotation SummarizationSetBy = Automatic
+
+		column local_hour
+			dataType: int64
+			isHidden
+			lineageTag: 794aa916-d7f9-5dc7-9645-c0cf79512010
+			summarizeBy: none
+			sourceColumn: local_hour
+
+			annotation SummarizationSetBy = Automatic
+
+		column n_snapshots
+			dataType: int64
+			lineageTag: c9e29cec-2000-5bed-a62c-8620342e695c
+			summarizeBy: none
+			sourceColumn: n_snapshots
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_listed
+			dataType: double
+			formatString: 0.00
+			lineageTag: 8525e7ed-8d58-57a9-8920-1e07f4c39117
+			summarizeBy: sum
+			sourceColumn: avg_listed
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_available
+			dataType: double
+			formatString: 0.00
+			lineageTag: e28fc14b-336c-5423-ac05-77a7c13dfa62
+			summarizeBy: sum
+			sourceColumn: avg_available
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_disabled
+			dataType: double
+			formatString: 0.00
+			lineageTag: aa3b2204-ce95-5ca0-b2b5-6201892e94a9
+			summarizeBy: sum
+			sourceColumn: avg_disabled
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_disabled_battery
+			dataType: double
+			formatString: 0.00
+			lineageTag: e277a5b8-1b3e-5296-a00a-cfa944405c88
+			summarizeBy: sum
+			sourceColumn: avg_disabled_battery
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_disabled_other
+			dataType: double
+			formatString: 0.00
+			lineageTag: b002aa4a-e484-5916-828c-2430e85ea4be
+			summarizeBy: sum
+			sourceColumn: avg_disabled_other
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_reserved
+			dataType: double
+			formatString: 0.00
+			lineageTag: 3e53b50e-63f7-574a-8031-8b5235e08396
+			summarizeBy: sum
+			sourceColumn: avg_reserved
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_low_battery
+			dataType: double
+			formatString: 0.00
+			lineageTag: c2daebdb-3cbd-5973-b8f4-cf0cb8023edc
+			summarizeBy: sum
+			sourceColumn: avg_low_battery
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_battery_pct
+			dataType: double
+			formatString: 0.00
+			lineageTag: c84fb5ed-6f53-5572-8152-c4c25524e190
+			summarizeBy: sum
+			sourceColumn: avg_battery_pct
+
+			annotation SummarizationSetBy = Automatic
+
+		partition fct_fleet_hourly = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "fct_fleet_hourly.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	table fct_zone_hourly
+		lineageTag: 21ad3551-0ca1-55bf-b5fd-e8168644f966
+
+		measure 'Departures per Day' = SUM ( fct_zone_hourly[departures_per_day] )
+			formatString: #,0.0
+			lineageTag: 3ff16423-612a-598f-895a-937ab8f7d737
+
+		measure 'Arrivals per Day' = SUM ( fct_zone_hourly[arrivals_per_day] )
+			formatString: #,0.0
+			lineageTag: efd7313d-14d2-53a3-9af2-2e2048ba93fb
+
+		measure 'Net Flow per Day' = [Arrivals per Day] - [Departures per Day]
+			formatString: +#,0.0;-#,0.0;0
+			lineageTag: 63a05e4f-bc86-525e-bd07-897ff28a90b2
+
+		measure 'Zones in Shortage' =
+				COUNTROWS (
+				    FILTER (
+				        SUMMARIZE ( fct_zone_hourly, fct_zone_hourly[zone_id], fct_zone_hourly[local_hour] ),
+				        CALCULATE ( SUM ( fct_zone_hourly[avg_available] ) ) < 1
+				            && CALCULATE ( SUM ( fct_zone_hourly[departures_per_day] ) ) >= 1
+				    )
+				)
+			formatString: #,0
+			lineageTag: 19c8fbe1-cbf8-56cb-9ec9-b714d6f119e5
+
+		measure 'Peak Demand Hour' =
+				MAXX (
+				    TOPN ( 1, VALUES ( dim_hour[local_hour] ), [Departures per Day], DESC ),
+				    dim_hour[local_hour]
+				)
+			formatString: 0
+			lineageTag: 9068d953-3d44-55f0-be67-d3bfcf8a7c06
+
+		column city
+			dataType: string
+			isHidden
+			lineageTag: 2c83b318-a8dd-5ac1-b754-4884485db97b
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_id
+			dataType: string
+			isHidden
+			lineageTag: 780a82f2-8917-50eb-8b32-107fbcd02a3e
+			summarizeBy: none
+			sourceColumn: zone_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column local_hour
+			dataType: int64
+			isHidden
+			lineageTag: 1ad8e7cb-6b10-55a0-8098-6eef2dd85a08
+			summarizeBy: none
+			sourceColumn: local_hour
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_available
+			dataType: double
+			formatString: 0.00
+			lineageTag: e413cccb-bcfe-503d-9117-c9c63cdecd4d
+			summarizeBy: sum
+			sourceColumn: avg_available
+
+			annotation SummarizationSetBy = Automatic
+
+		column avg_low_battery
+			dataType: double
+			formatString: 0.00
+			lineageTag: 74d9fb2d-6c56-5a36-a3d3-4aa169ad87d8
+			summarizeBy: sum
+			sourceColumn: avg_low_battery
+
+			annotation SummarizationSetBy = Automatic
+
+		column departures_per_day
+			dataType: double
+			formatString: 0.00
+			lineageTag: 250f27d0-4986-54f5-a241-e56e46540345
+			summarizeBy: sum
+			sourceColumn: departures_per_day
+
+			annotation SummarizationSetBy = Automatic
+
+		column arrivals_per_day
+			dataType: double
+			formatString: 0.00
+			lineageTag: ee1cea63-9fcb-5137-8dc9-3ed8ef24f646
+			summarizeBy: sum
+			sourceColumn: arrivals_per_day
+
+			annotation SummarizationSetBy = Automatic
+
+		partition fct_zone_hourly = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "fct_zone_hourly.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	table fct_battery_swaps
+		lineageTag: 303cdeef-252c-54af-ad08-ceb0e883af8d
+
+		measure 'Battery Swaps' = CALCULATE ( COUNTROWS ( fct_battery_swaps ), fct_battery_swaps[is_confirmed] = TRUE () )
+			formatString: #,0
+			lineageTag: cff80ff8-3029-5c22-b876-80cb2601645b
+
+		measure 'Swaps After Evening Peak %' =
+				DIVIDE (
+				    CALCULATE ( [Battery Swaps], dim_hour[local_hour] >= 20 || dim_hour[local_hour] < 2 ),
+				    [Battery Swaps]
+				)
+			formatString: 0%
+			lineageTag: af71318d-22fc-5456-9571-e33047a3138e
+
+		measure 'Average Battery Gain' = CALCULATE ( AVERAGE ( fct_battery_swaps[battery_gain_pct] ), fct_battery_swaps[is_confirmed] = TRUE () )
+			formatString: 0
+			lineageTag: fb5a2b79-d24f-519f-aa8d-1788f59c0fb7
+
+		column city
+			dataType: string
+			isHidden
+			lineageTag: 0fdaa835-50db-5914-b904-958817dc00aa
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column track_id
+			dataType: string
+			isHidden
+			lineageTag: 43516da9-5e9e-50db-897d-2a240098d3e5
+			summarizeBy: none
+			sourceColumn: track_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_id
+			dataType: string
+			isHidden
+			lineageTag: d0521325-bb53-5b00-a6d6-649c591d08e2
+			summarizeBy: none
+			sourceColumn: zone_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column snapshot_at_local
+			dataType: dateTime
+			formatString: General Date
+			lineageTag: 1920020e-42c3-5c56-b1c5-c0d951d86dfb
+			summarizeBy: none
+			sourceColumn: snapshot_at_local
+
+			annotation SummarizationSetBy = Automatic
+
+		column local_hour
+			dataType: int64
+			isHidden
+			lineageTag: 961aaed6-afc2-5b65-ab65-883116d8219d
+			summarizeBy: none
+			sourceColumn: local_hour
+
+			annotation SummarizationSetBy = Automatic
+
+		column previous_battery_pct
+			dataType: double
+			formatString: 0.00
+			lineageTag: f8b83649-37f4-5ca5-bbf6-31be15b1fc5c
+			summarizeBy: sum
+			sourceColumn: previous_battery_pct
+
+			annotation SummarizationSetBy = Automatic
+
+		column battery_pct
+			dataType: double
+			formatString: 0.00
+			lineageTag: c7432028-1790-56fb-abba-639e1327c15a
+			summarizeBy: sum
+			sourceColumn: battery_pct
+
+			annotation SummarizationSetBy = Automatic
+
+		column battery_gain_pct
+			dataType: double
+			formatString: 0.00
+			lineageTag: 408ec793-b45d-53fa-aae9-28d84ef18851
+			summarizeBy: sum
+			sourceColumn: battery_gain_pct
+
+			annotation SummarizationSetBy = Automatic
+
+		column previous_is_disabled
+			dataType: boolean
+			lineageTag: ea175833-d22b-542f-a576-053f4f16d884
+			summarizeBy: none
+			sourceColumn: previous_is_disabled
+
+			annotation SummarizationSetBy = Automatic
+
+		column is_confirmed
+			dataType: boolean
+			lineageTag: 4ca40ae6-08b7-540b-8dc3-c58e97227740
+			summarizeBy: none
+			sourceColumn: is_confirmed
+
+			annotation SummarizationSetBy = Automatic
+
+		partition fct_battery_swaps = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "fct_battery_swaps.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
+	relationship f31cf6a0-06cb-5abe-8789-21c513455568
+		fromColumn: fct_fleet_hourly.city
+		toColumn: dim_city.city
+
+	relationship 41c28341-c1a7-52e6-8c8c-8e8d6c5d3087
+		fromColumn: fct_fleet_hourly.local_hour
+		toColumn: dim_hour.local_hour
+
+	relationship 8445f99a-a70e-59e9-a142-cafc139dc132
+		fromColumn: dim_zone.city
+		toColumn: dim_city.city
+
+	relationship c7d336f8-a2c2-5c0f-bba3-7ef9c6e0a5cc
+		fromColumn: fct_zone_hourly.zone_id
+		toColumn: dim_zone.zone_id
+
+	relationship 8ac3857c-a383-5d43-803e-ac53ba89883c
+		fromColumn: fct_zone_hourly.local_hour
+		toColumn: dim_hour.local_hour
+
+	relationship 791a7c38-bd6c-5670-9c16-d1202188c5c1
+		fromColumn: fct_battery_swaps.zone_id
+		toColumn: dim_zone.zone_id
+
+	relationship a57ee9cd-e162-5e34-bc57-f39a693731fa
+		fromColumn: fct_battery_swaps.local_hour
+		toColumn: dim_hour.local_hour

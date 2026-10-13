@@ -1,7 +1,8 @@
 # Collects the YEGO GBFS feed in the cloud, so no computer has to stay on.
-# Every hour: 55 minutes of snapshots (one every 2 minutes, Nice and Barcelona), merged into one
-# Parquet file per city, committed to the `data` branch. Stop it from the Actions tab
-# (Collect YEGO feed > ... > Disable workflow).
+# Each run: 55 minutes of snapshots (one every 2 minutes, Nice and Barcelona), merged into one
+# Parquet file per city, committed to the `data` branch, then the run starts the next one.
+# The hourly schedule only restarts the chain if it ever breaks.
+# Start: Actions tab > Collect YEGO feed > Run workflow. Stop: ... > Disable workflow.
 
 name: Collect YEGO feed
 
@@ -16,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   collect:
@@ -46,3 +48,9 @@ jobs:
           git add data
           git diff --cached --quiet || git commit -q -m "data $(date -u +%Y-%m-%dT%H:%MZ)"
           git push
+
+      - name: Start the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml --ref ${{ github.ref_name }}

@@ -1,0 +1,25 @@
+{
+  "last_updated": 1791917047,
+  "ttl": 240,
+  "data": {
+    "plans": [
+      {
+        "plan_id": "barcelona yego_scooter",
+        "name": "barcelona yego_scooter",
+        "currency": "EUR",
+        "price": 0.0,
+        "url": "https://www.rideyego.com/how-it-works/barcelona#pricing",
+        "is_taxable": false,
+        "description": "Pricing plan for ride yego_scooter in Barcelona",
+        "per_min_pricing": [
+          {
+            "start": 0,
+            "rate": 0.36,
+            "interval": 1
+          }
+        ]
+      }
+    ]
+  },
+  "version": "2.3"
+}

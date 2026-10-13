@@ -47,12 +47,15 @@ GBFS REST API ──► collector.py ──► Parquet ──► track_vehicles.
    map, KPIs and the fleet status by hour.
 7. `.github/workflows/ci.yml`: on every push, rebuilds the dbt models and tests from the
    versioned data in `data/compact/`, exports the star schema and runs the API tests.
+8. `.github/workflows/collect.yml`: collects the feed in the cloud. Every hour, 55 minutes of
+   snapshots (one every 2 minutes) are merged into one file per city and committed to the
+   `data` branch, so no computer has to stay on.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-python src/collector.py --loop          # collect data
+git fetch origin data && git archive origin/data data | tar -x   # get the cloud collection
 python src/pipeline.py                  # tracking, dbt build, reports, BI export, TMDL
 uvicorn api.main:app --reload           # web page on http://127.0.0.1:8000, API docs on /docs
 pytest                                  # API tests

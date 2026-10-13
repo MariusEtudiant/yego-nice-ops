@@ -20,7 +20,8 @@ jobs:
 
       - name: dbt build (models and data tests) on the versioned compact data
         working-directory: transform
-        run: dbt build --profiles-dir . --vars '{source: compact}'
+        run: |
+          dbt build --profiles-dir . --vars '{source: compact}'
 
       - name: Export the star schema used by Power BI and the API
         run: python src/export_bi.py

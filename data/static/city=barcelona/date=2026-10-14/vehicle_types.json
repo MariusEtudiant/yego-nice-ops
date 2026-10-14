@@ -1,0 +1,84 @@
+{
+  "last_updated": 1791936120,
+  "ttl": 240,
+  "data": {
+    "vehicle_types": [
+      {
+        "vehicle_type_id": "yego_scooter",
+        "form_factor": "moped",
+        "propulsion_type": "electric",
+        "name": "Eletric moped",
+        "max_range_meters": 50000,
+        "rider_capacity": 2,
+        "eco_label": [
+          {
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
+          }
+        ],
+        "g_CO2_KM": 0,
+        "vehicle_image": "https://rideyego.com/img/e-scooter.png",
+        "color": "green",
+        "wheel_count": 2,
+        "max_permitted_speed": 45,
+        "default_reserve_time": 15,
+        "return_constraint": "free_floating",
+        "default_pricing_plan_id": "barcelona yego_scooter",
+        "pricing_plan_ids": [
+          "barcelona yego_scooter"
+        ]
+      },
+      {
+        "vehicle_type_id": "yego_bike",
+        "form_factor": "scooter",
+        "propulsion_type": "electric",
+        "name": "Eletric bike",
+        "max_range_meters": 50000,
+        "rider_capacity": 1,
+        "eco_label": [
+          {
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
+          }
+        ],
+        "g_CO2_KM": 0,
+        "vehicle_image": "https://rideyego.com/img/e-scooter.png",
+        "color": "green",
+        "wheel_count": 2,
+        "max_permitted_speed": 25,
+        "default_reserve_time": 15,
+        "return_constraint": "free_floating",
+        "default_pricing_plan_id": "barcelona yego_bike",
+        "pricing_plan_ids": [
+          "barcelona yego_bike"
+        ]
+      },
+      {
+        "vehicle_type_id": "yego_kick",
+        "form_factor": "bicycle",
+        "propulsion_type": "electric_assist",
+        "name": "Eletric kick",
+        "max_range_meters": 50000,
+        "rider_capacity": 1,
+        "eco_label": [
+          {
+            "country_code": "ES",
+            "eco_sticker": "distintivo_ambiental_0"
+          }
+        ],
+        "g_CO2_KM": 0,
+        "vehicle_image": "https://rideyego.com/img/e-scooter.png",
+        "color": "green",
+        "wheel_count": 2,
+        "max_permitted_speed": 25,
+        "default_reserve_time": 15,
+        "return_constraint": "free_floating",
+        "default_pricing_plan_id": "barcelona yego_kick",
+        "pricing_plan_ids": [
+          "barcelona yego_kick"
+        ]
+      }
+    ]
+  },
+  "version": "2.3"
+}

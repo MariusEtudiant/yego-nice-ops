@@ -1,0 +1,25 @@
+{
+  "last_updated": 1792281646,
+  "ttl": 206,
+  "data": {
+    "plans": [
+      {
+        "plan_id": "nice yego_scooter",
+        "name": "nice yego_scooter",
+        "currency": "EUR",
+        "price": 0.0,
+        "url": "https://www.rideyego.com/how-it-works/nice#pricing",
+        "is_taxable": false,
+        "description": "Pricing plan for ride yego_scooter in Nice",
+        "per_min_pricing": [
+          {
+            "start": 0,
+            "rate": 0.39,
+            "interval": 1
+          }
+        ]
+      }
+    ]
+  },
+  "version": "2.3"
+}

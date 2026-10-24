@@ -19,7 +19,8 @@ BI = ROOT / "data" / "bi"
 OUT = ROOT / "powerbi" / "yego_fleet_model.tmdl"
 NS = uuid.UUID("6f1c2b0e-7a51-4c5e-9a39-0c8f3d2b1a10")  # lineage tags stables d'une generation a l'autre
 
-TABLES = ["dim_city", "dim_zone", "dim_hour", "fct_fleet_hourly", "fct_zone_hourly", "fct_battery_swaps"]
+TABLES = ["dim_city", "dim_zone", "dim_hour", "fct_fleet_hourly", "fct_zone_hourly", "fct_battery_swaps",
+          "fct_battery_waits"]
 
 TYPES = {"VARCHAR": "string", "BIGINT": "int64", "INTEGER": "int64", "DOUBLE": "double", "BOOLEAN": "boolean",
          "TIMESTAMP": "dateTime", "DATE": "dateTime"}
@@ -28,7 +29,8 @@ TYPES = {"VARCHAR": "string", "BIGINT": "int64", "INTEGER": "int64", "DOUBLE": "
 HIDDEN = {("fct_fleet_hourly", "city"), ("fct_fleet_hourly", "local_hour"), ("fct_zone_hourly", "city"),
           ("fct_zone_hourly", "zone_id"), ("fct_zone_hourly", "local_hour"), ("fct_battery_swaps", "city"),
           ("fct_battery_swaps", "zone_id"), ("fct_battery_swaps", "local_hour"), ("fct_battery_swaps", "track_id"),
-          ("dim_zone", "city")}
+          ("fct_battery_waits", "city"), ("fct_battery_waits", "zone_id"), ("fct_battery_waits", "start_hour"),
+          ("fct_battery_waits", "track_id"), ("fct_battery_waits", "episode"), ("dim_zone", "city")}
 CATEGORY = {("dim_zone", "zone_lat"): "Latitude", ("dim_zone", "zone_lon"): "Longitude",
             ("dim_city", "city_name"): "City", ("dim_city", "country"): "Country"}
 SORT_BY = {("dim_hour", "hour_label"): "local_hour"}
@@ -41,6 +43,8 @@ RELATIONSHIPS = [
     ("fct_zone_hourly", "local_hour", "dim_hour", "local_hour"),
     ("fct_battery_swaps", "zone_id", "dim_zone", "zone_id"),
     ("fct_battery_swaps", "local_hour", "dim_hour", "local_hour"),
+    ("fct_battery_waits", "zone_id", "dim_zone", "zone_id"),
+    ("fct_battery_waits", "start_hour", "dim_hour", "local_hour"),
 ]
 
 # (table d'accueil, nom, expression DAX, format)
@@ -74,6 +78,16 @@ MEASURES = [
     ("fct_battery_swaps", "Average Battery Gain",
      "CALCULATE ( AVERAGE ( fct_battery_swaps[battery_gain_pct] ), fct_battery_swaps[is_confirmed] = TRUE () )",
      "0"),
+    ("fct_battery_waits", "Median Battery Wait (h)",
+     "CALCULATE (\n    MEDIAN ( fct_battery_waits[wait_hours] ),\n    fct_battery_waits[outcome] = \"swapped\",\n"
+     "    fct_battery_waits[left_censored] = FALSE ()\n)", "0.0"),
+    ("fct_battery_waits", "Battery Waits over 12h %",
+     "DIVIDE (\n    CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = \"swapped\",\n"
+     "        fct_battery_waits[left_censored] = FALSE (), fct_battery_waits[wait_hours] > 12 ),\n"
+     "    CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = \"swapped\",\n"
+     "        fct_battery_waits[left_censored] = FALSE () )\n)", "0%"),
+    ("fct_battery_waits", "Scooters Waiting Now",
+     "CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = \"ongoing\" )", "#,0"),
 ]
 
 

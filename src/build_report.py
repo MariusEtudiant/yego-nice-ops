@@ -4,80 +4,32 @@ Note d'analyse operationnelle (1 page A4) a partir des marts dbt.
     python src/build_report.py
 
 Sorties : reports/note_yego_nice.html et reports/note_yego_nice.pdf (impression via Edge headless).
-Les noms de quartiers viennent du reverse geocoding OpenStreetMap (Nominatim), mis en cache dans
-data/static/zone_names.json pour ne pas solliciter le service a chaque execution.
+Les chiffres viennent de src/analysis.py, comme ceux du rapport en anglais.
 """
 
 from __future__ import annotations
 
 import html
 import io
-import json
-import os
 import pathlib
 import subprocess
-import time
 
-import duckdb
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
-import requests  # noqa: E402
+
+from analysis import CITY, DISABLE_BATTERY_PCT, IDLE_HOURS, MIDDAY_HOURS, REPO_URL, build  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TRANSFORM = ROOT / "transform"
-DB_PATH = ROOT / "data" / "yego.duckdb"
 REPORT_DIR = ROOT / "reports"
-ZONE_NAMES_CACHE = ROOT / "data" / "static" / "zone_names.json"
 EDGE = pathlib.Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
-
-CITY = "nice"
-REPO_URL = "github.com/MariusEtudiant/yego-nice-ops"
-DISABLE_BATTERY_PCT = 15
-IDLE_HOURS = 6
 
 # Palette (categorielle, ordre fixe) et encre, fond clair.
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 SURFACE, INK, INK_2, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
-
-
-# --- Donnees ---------------------------------------------------------------
-
-
-def connect() -> duckdb.DuckDBPyConnection:
-    # Les vues staging lisent les Parquet en chemin relatif au dossier dbt.
-    os.chdir(TRANSFORM)
-    return duckdb.connect(str(DB_PATH), read_only=True)
-
-
-def q(con, sql: str, **params) -> pd.DataFrame:
-    return con.execute(sql, params).df() if params else con.sql(sql).df()
-
-
-def zone_name(zone_id: str, lat: float, lon: float, cache: dict) -> str:
-    if zone_id in cache:
-        return cache[zone_id]
-    name = zone_id
-    try:
-        r = requests.get(
-            "https://nominatim.openstreetmap.org/reverse",
-            params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 16, "accept-language": "fr"},
-            headers={"User-Agent": "yego-nice-ops/1.0 (portfolio, usage ponctuel)"},
-            timeout=15,
-        )
-        addr = r.json().get("address", {})
-        for key in ("neighbourhood", "quarter", "suburb", "road", "city_district"):
-            if addr.get(key):
-                name = addr[key]
-                break
-        time.sleep(1.1)  # politique d'usage Nominatim : 1 requete / seconde
-    except Exception:  # noqa: BLE001 - un nom manquant ne doit pas bloquer la note
-        pass
-    cache[zone_id] = name
-    return name
+JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
 
 
 # --- Graphiques ------------------------------------------------------------
@@ -91,6 +43,8 @@ def style_axes(ax) -> None:
     ax.tick_params(colors=MUTED, labelsize=7, length=0)
     ax.yaxis.grid(True, color=GRID, linewidth=0.6)
     ax.set_axisbelow(True)
+    ax.set_xticks(range(0, 24, 3), [f"{h}h" for h in range(0, 24, 3)])
+    ax.set_xlim(-0.6, 23.6)
 
 
 def to_svg(fig) -> str:
@@ -101,190 +55,43 @@ def to_svg(fig) -> str:
     return svg[svg.index("<svg"):]
 
 
-def chart_fleet_state(snap: pd.DataFrame) -> str:
+def chart_fleet_state(p: pd.DataFrame) -> str:
     fig, ax = plt.subplots(figsize=(3.7, 1.9), dpi=100)
     fig.patch.set_facecolor(SURFACE)
     style_axes(ax)
-    x = snap["snapshot_at_local"]
-    layers = [
-        (snap["n_available"], "Disponibles", BLUE),
-        (snap["n_disabled_battery"], f"Désactivés : batterie < {DISABLE_BATTERY_PCT} %", ORANGE),
-        (snap["n_disabled_other"], "Désactivés : autre motif", AQUA),
-    ]
-    ax.stackplot(x, *[v for v, _, _ in layers], labels=[l for _, l, _ in layers],
-                 colors=[c for _, _, c in layers], edgecolor=SURFACE, linewidth=0.8)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Hh"))
-    ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
-    ax.set_xlim(x.min(), x.max())
-    ax.set_ylim(0, snap["n_listed"].max() * 1.05)
+    bottom = pd.Series(0.0, index=p.index)
+    for col, label, color in (("available", "Disponibles", BLUE),
+                              ("battery", f"Désactivés : batterie < {DISABLE_BATTERY_PCT} %", ORANGE),
+                              ("other", "Désactivés : autre motif", AQUA)):
+        ax.bar(p["hour"], p[col], bottom=bottom, color=color, width=0.78, edgecolor=SURFACE,
+               linewidth=0.6, label=label)
+        bottom += p[col]
+    ax.set_ylim(0, bottom.max() * 1.08)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3, frameon=False,
               fontsize=6.5, labelcolor=INK_2, handlelength=1, columnspacing=1)
     return to_svg(fig)
 
 
-def chart_departures(dep: pd.DataFrame) -> str:
-    fig, ax = plt.subplots(figsize=(3.4, 1.9), dpi=100)
+def chart_timing(p: pd.DataFrame) -> str:
+    """Departs et changements de batterie par heure : deux petits graphiques empiles, un seul axe chacun."""
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(3.4, 2.1), dpi=100, sharex=True,
+                                 gridspec_kw={"height_ratios": [1.3, 1], "hspace": 0.45})
     fig.patch.set_facecolor(SURFACE)
-    style_axes(ax)
-    labels = [f"{h:%H}h" for h in dep["hour_local"]]
-    ax.bar(range(len(dep)), dep["departures"], color=BLUE, width=0.72, edgecolor=SURFACE, linewidth=0.8)
-    step = max(1, -(-len(dep) // 6))  # au plus ~6 libelles, sinon ils se chevauchent
-    ax.set_xticks(range(0, len(dep), step), labels[::step])
-    # Libelle direct sur la seule valeur max.
-    if len(dep):
-        i = int(dep["departures"].idxmax())
-        ax.annotate(f"{int(dep['departures'][i])}", (i, dep["departures"][i]), ha="center",
-                    va="bottom", fontsize=7, color=INK, xytext=(0, 2), textcoords="offset points")
-        ax.set_ylim(0, dep["departures"].max() * 1.18)
+    peak = int(p.loc[p["departures"].idxmax(), "hour"])
+    for ax, col, color, title in ((a1, "departures", BLUE, "Départs par heure"),
+                                  (a2, "swaps", AQUA, "Changements de batterie par heure")):
+        style_axes(ax)
+        ax.bar(p["hour"], p[col], color=color, width=0.72, edgecolor=SURFACE, linewidth=0.6)
+        ax.axvline(peak, color=MUTED, linestyle="--", linewidth=0.8)
+        ax.set_title(title, fontsize=7, color=INK_2, loc="left", pad=2)
     return to_svg(fig)
-
-
-# --- Calcul des indicateurs ------------------------------------------------
-
-
-def build() -> dict:
-    con = connect()
-    p = {"city": CITY}
-
-    window = q(con, """
-        select min(snapshot_at_local) as start_at, max(snapshot_at_local) as end_at, count(*) as n_snapshots,
-               count(*) filter (where seconds_since_previous > 360) as n_gaps,
-               max(seconds_since_previous) as max_gap_s
-        from stg_snapshots where city = $city""", **p).iloc[0]
-    hours_observed = (window.end_at - window.start_at).total_seconds() / 3600
-
-    snap = q(con, """
-        select snapshot_ts, any_value(snapshot_at_local) as snapshot_at_local,
-               count(*) as n_listed,
-               count(*) filter (where is_available) as n_available,
-               count(*) filter (where is_reserved) as n_reserved,
-               count(*) filter (where unavailability_reason = 'battery') as n_disabled_battery,
-               count(*) filter (where unavailability_reason = 'other') as n_disabled_other
-        from stg_vehicle_snapshots where city = $city and is_valid_position
-        group by snapshot_ts order by snapshot_ts""", **p)
-
-    avg = snap.mean(numeric_only=True)
-    last = snap.iloc[-1]
-
-    stays = q(con, "select * from fct_vehicle_stays where city = $city", **p)
-    departures_total = int(stays["is_departure"].sum())
-
-    dep_hourly = q(con, """
-        select date_trunc('hour', last_seen_local) as hour_local, count(*) as departures
-        from fct_vehicle_stays where city = $city and is_departure
-        group by 1 order by 1""", **p)
-
-    swaps = q(con, "select * from fct_battery_swaps where city = $city and is_confirmed", **p)
-
-    # Qualite du suivi : part des observations rattachees au vehicule du releve precedent
-    # (hors premier releve et releves suivant un trou de collecte).
-    tracking_rate = q(con, """
-        select avg((st.first_seen_ts < o.snapshot_ts)::int) as rate
-        from stg_vehicle_snapshots o
-        join stg_snapshots s using (city, snapshot_ts)
-        join fct_vehicle_stays st using (city, track_id)
-        where o.city = $city and o.track_id is not null
-          and s.seconds_since_previous <= 360""", **p).iloc[0].rate
-
-    # Recommandation 1 : calage de la tournee batterie par rapport au pic de demande.
-    hourly = q(con, """
-        with f as (select hour_local, avg_listed, avg_available, avg_reserved, avg_disabled_battery,
-                          avg_disabled_other
-                   from fct_fleet_hourly where city = $city),
-        s as (select date_trunc('hour', snapshot_at_local) as hour_local, count(*) as swaps
-              from fct_battery_swaps where city = $city and is_confirmed group by 1),
-        d as (select date_trunc('hour', last_seen_local) as hour_local, count(*) as departures
-              from fct_vehicle_stays where city = $city and is_departure group by 1)
-        select f.*, coalesce(s.swaps, 0) as swaps, coalesce(d.departures, 0) as departures
-        from f left join s using (hour_local) left join d using (hour_local)
-        order by hour_local""", **p)
-
-    # File d'attente batterie, par zone (au dernier releve).
-    battery_queue = q(con, """
-        select zone_id, count(*) as n, avg(lat) as lat, avg(lon) as lon
-        from stg_vehicle_snapshots
-        where city = $city and is_valid_position and unavailability_reason = 'battery'
-          and snapshot_ts = (select max(snapshot_ts) from stg_snapshots where city = $city)
-        group by zone_id order by n desc""", **p)
-
-    # Recommandation 2 : offre vs demande par zone, sur toute la fenetre.
-    zones = q(con, """
-        select zone_id, avg(zone_lat) as lat, avg(zone_lon) as lon,
-               avg(avg_available) as stock, sum(departures_per_day) as departures
-        from fct_zone_hourly where city = $city
-        group by zone_id""", **p).dropna(subset=["lat"])
-    zones["pressure"] = zones["departures"] / (zones["stock"] + 1)
-    tension = zones[zones["departures"] >= 3].sort_values("pressure", ascending=False).head(3).copy()
-    # On prend plus de candidats en surplus : ceux qui portent le meme nom de quartier qu'une
-    # zone en tension seront ecartes (deux zones voisines, message contradictoire a la lecture).
-    surplus = (zones[(zones["stock"] >= 3) & ~zones["zone_id"].isin(tension["zone_id"])]
-               .sort_values(["departures", "stock"], ascending=[True, False]).head(8).copy())
-    battery_queue_total = int(battery_queue["n"].sum())
-    battery_queue = battery_queue.head(3).copy()
-
-    # Recommandation 3 : vehicules desactives hors batterie et immobilises depuis longtemps.
-    other_idle = stays[stays["still_listed"] & stays["is_disabled_at_end"]
-                       & (stays["battery_end_pct"] >= DISABLE_BATTERY_PCT)]
-    other_idle_long = other_idle[other_idle["stay_hours"] >= IDLE_HOURS]
-    idle_all_long = stays[stays["still_listed"] & (stays["stay_hours"] >= IDLE_HOURS)]
-
-    # Comparaison Barcelone (moyennes sur la fenetre commune).
-    compare = q(con, """
-        with s as (
-            select city, snapshot_ts, count(*) n,
-                   count(*) filter (where is_available) a,
-                   count(*) filter (where unavailability_reason = 'battery') b,
-                   count(*) filter (where unavailability_reason = 'other') o
-            from stg_vehicle_snapshots where is_valid_position group by all),
-        w as (select city, (max(snapshot_ts) - min(snapshot_ts)) / 3600.0 as h from stg_snapshots group by city),
-        d as (select city, count(*) filter (where is_departure) dep from fct_vehicle_stays group by city),
-        sw as (select city, count(*) filter (where is_confirmed) swaps from fct_battery_swaps group by city)
-        select s.city, avg(n) fleet, avg(a) / avg(n) pct_available, avg(b) / avg(n) pct_battery,
-               avg(o) / avg(n) pct_other,
-               any_value(d.dep) / any_value(w.h) / avg(n) dep_per_vehicle_hour,
-               coalesce(any_value(sw.swaps), 0) / any_value(w.h) swaps_per_hour
-        from s join w using (city) left join d using (city) left join sw using (city)
-        group by s.city order by s.city desc""")
-
-    tests = dbt_test_summary()
-
-    # Noms de quartiers.
-    cache = json.loads(ZONE_NAMES_CACHE.read_text(encoding="utf-8")) if ZONE_NAMES_CACHE.exists() else {}
-    for df in (battery_queue, tension, surplus):
-        df["name"] = [zone_name(z, la, lo, cache) for z, la, lo in zip(df.zone_id, df.lat, df.lon)]
-    surplus = surplus[~surplus["name"].isin(tension["name"])].head(3)
-    ZONE_NAMES_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    ZONE_NAMES_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    return dict(
-        window=window, hours_observed=hours_observed, snap=snap, avg=avg, last=last,
-        departures_total=departures_total, dep_hourly=dep_hourly, swaps=swaps, tracking_rate=tracking_rate,
-        hourly=hourly,
-        battery_queue=battery_queue.assign(n=lambda d: d.n.astype(int)),
-        battery_queue_total=battery_queue_total,
-        tension=tension, surplus=surplus, other_idle=other_idle, other_idle_long=other_idle_long,
-        idle_all_long=idle_all_long, compare=compare, tests=tests,
-    )
-
-
-def dbt_test_summary() -> dict:
-    """Lit le dernier run_results.json de dbt pour afficher l'etat des tests dans la note."""
-    path = TRANSFORM / "target" / "run_results.json"
-    summary = {"pass": 0, "warn": 0, "fail": 0}
-    if path.exists():
-        for r in json.loads(path.read_text(encoding="utf-8"))["results"]:
-            if r["unique_id"].startswith("test."):
-                status = {"pass": "pass", "warn": "warn"}.get(r["status"], "fail")
-                summary[status] += 1
-    return summary
 
 
 # --- Rendu -----------------------------------------------------------------
 
 
 def fr(x: float, d: int = 0) -> str:
-    s = f"{x:,.{d}f}".replace(",", " ").replace(".", ",")
-    return s
+    return f"{x:,.{d}f}".replace(",", " ").replace(".", ",")
 
 
 def pct(x: float, d: int = 0) -> str:
@@ -292,147 +99,54 @@ def pct(x: float, d: int = 0) -> str:
 
 
 def names(df: pd.DataFrame) -> str:
-    # Deux zones voisines peuvent porter le meme nom de quartier : on dedoublonne.
-    return ", ".join(html.escape(n) for n in dict.fromkeys(df["name"])) if len(df) else "n/d"
-
-
-def plural(n: int, word: str) -> str:
-    return f"{n} {word}{'s' if n > 1 else ''}"
-
-
-def battery_timing_facts(h: pd.DataFrame) -> dict | None:
-    """Compare le pic de demande et la periode ou les batteries sont changees.
-    Renvoie None quand il n'y a pas assez de matiere (pas de changement, file quasi vide au pic)."""
-    # Premiere et derniere heures de collecte sont partielles : exclues du choix du pic.
-    full = h.iloc[1:-1] if len(h) > 2 else h
-    peak = full.loc[full["departures"].idxmax()]
-    n_swaps = int(h["swaps"].sum())
-    if n_swaps == 0 or peak["avg_disabled_battery"] < 3:
-        return None
-
-    # Fenetre qui concentre 80 % des changements de batterie.
-    cum = h["swaps"].cumsum() / n_swaps
-    start = h.loc[(cum >= 0.10).idxmax(), "hour_local"]
-    end = h.loc[(cum >= 0.90).idxmax(), "hour_local"]
-    floor = h["avg_disabled_battery"].min()
-    return dict(
-        peak_hour=peak["hour_local"],
-        peak_departures=int(peak["departures"]),
-        queue_at_peak=peak["avg_disabled_battery"],
-        queue_share=peak["avg_disabled_battery"] / peak["avg_listed"],
-        n_swaps=n_swaps,
-        in_window=int(h[(h["hour_local"] >= start) & (h["hour_local"] <= end)]["swaps"].sum()),
-        start=start,
-        end=end + pd.Timedelta(hours=1),
-        cleared=h.loc[(h["avg_disabled_battery"] <= floor + 0.5).idxmax(), "hour_local"],
-        after_peak=start > peak["hour_local"],
-    )
-
-
-def reposition_facts(k: dict) -> dict:
-    t, s = k["tension"], k["surplus"]
-    surplus_stock, tension_dep, tension_stock = s["stock"].sum(), t["departures"].sum(), t["stock"].sum()
-    return dict(
-        surplus_stock=surplus_stock,
-        surplus_departures=int(round(s["departures"].sum())),
-        tension_departures=int(round(tension_dep)),
-        tension_stock=tension_stock,
-        move_n=int(max(1, min(surplus_stock - len(s), tension_dep - tension_stock))),
-    )
-
-
-def battery_timing_reco(k: dict) -> tuple[str, str]:
-    f = battery_timing_facts(k["hourly"])
-    if f is None:
-        bq, total = k["battery_queue"], k["battery_queue_total"]
-        return (
-            "Cibler la tournée batterie par zone",
-            f"{plural(total, 'scooter')} désactivé{'s' if total > 1 else ''} sous {DISABLE_BATTERY_PCT} % au "
-            f"dernier relevé, principalement à {names(bq)}.",
-        )
-
-    timing = (
-        f"L'essentiel des changements ({fr(f['in_window'])} sur {f['n_swaps']}) a eu lieu entre "
-        f"{f['start']:%H}h et {f['end']:%H}h, "
-        + ("après ce pic" if f["after_peak"] else "pendant ou avant ce pic")
-        + f", et la file n'est retombée à son minimum qu'à {f['cleared']:%H}h."
-    )
-    return (
-        "Avancer la tournée batterie avant le pic du soir" if f["after_peak"]
-        else "Concentrer la tournée batterie avant les pics de demande",
-        f"Au pic de demande ({f['peak_hour']:%H}h, {plural(f['peak_departures'], 'départ')}), "
-        f"{fr(f['queue_at_peak'])} scooters étaient indisponibles faute de batterie "
-        f"({pct(f['queue_share'])} de la flotte listée). {timing} Avancer cette tournée "
-        f"de deux heures remettrait ces scooters en circulation au moment où la demande est la plus forte. "
-        f"À confirmer sur plusieurs soirées.",
-    )
-
-
-def departures_text(df: pd.DataFrame) -> str:
-    n = int(round(df["departures"].sum()))
-    return "aucun départ" if n == 0 else plural(n, "départ")
-
-
-def duration(hours: float) -> str:
-    return f"{fr(hours * 60)} min" if hours < 2 else f"{fr(hours)} h"
+    """Liste des zones ; celles d'une meme commune sont regroupees : "A, B et C (Cagnes-sur-Mer)"."""
+    parts = [n.rsplit(" (", 1) for n in dict.fromkeys(df["name"])]
+    towns = {p[1].rstrip(")") for p in parts if len(p) == 2}
+    grouped = len(parts) > 1 and len(towns) == 1 and all(len(p) == 2 for p in parts)
+    items = [html.escape(p[0] if grouped else " (".join(p)) for p in parts]
+    joined = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " et " + items[-1]
+    return f"{joined} ({html.escape(towns.pop())})" if grouped else joined
 
 
 def render(k: dict) -> str:
-    w, avg, last = k["window"], k["avg"], k["last"]
-    fleet = avg.n_listed
-    unavailable = avg.n_disabled_battery + avg.n_disabled_other
-    period = f"{w.start_at:%d/%m %Hh%M} → {w.end_at:%d/%m %Hh%M}"
-
+    w, p, ev, cmp_ = k["window"], k["profile"], k["evenings"], k["compare"].set_index("city")
+    bcn = cmp_.loc["barcelona"] if "barcelona" in cmp_.index else None
+    first, last = pd.Timestamp(k["days"][0]), pd.Timestamp(k["days"][-1])
+    peaks = " ou ".join(f"{h}h" for h in sorted(set(ev["peak_hour"])))
+    n_majority = int((ev["share_after_peak"] > 0.5).sum())
     t, s = k["tension"], k["surplus"]
-    rf = reposition_facts(k)
-
-    if len(t):
-        reposition = (
-            f"Repositionner environ {plural(rf['move_n'], 'scooter')} vers les zones en tension",
-            f"Les zones {names(t)} ont généré {plural(rf['tension_departures'], 'départ')} sur la période pour "
-            f"seulement {fr(rf['tension_stock'], 1)} scooters disponibles en moyenne. À l'inverse, {names(s)} "
-            f"immobilisent {fr(rf['surplus_stock'], 1)} scooters pour {departures_text(s)}. "
-            f"Le volume exact est à calibrer sur plusieurs semaines.",
-        )
-    else:
-        reposition = (
-            "Surveiller les zones en surplus",
-            f"{names(s)} immobilisent {fr(rf['surplus_stock'], 1)} scooters disponibles pour "
-            f"{departures_text(s)}. La période observée est encore trop courte pour "
-            f"désigner des zones en tension vers lesquelles les déplacer.",
-        )
-
-    n_other, n_other_long = len(k["other_idle"]), len(k["other_idle_long"])
-    other_long_text = (
-        f", dont {n_other_long} sans avoir bougé depuis au moins {IDLE_HOURS} h" if n_other_long else ""
-    )
+    move_n = int(max(1, min(s["stock"].sum() - len(s), t["dep"].sum() - t["stock"].sum())))
+    oa = k["out_of_area"].sort_values("city", ascending=False)
+    oa_text = " ; ".join(f"un scooter de {'Nice' if r.city == 'nice' else 'Barcelone'} désactivé "
+                         f"{fr(r.days)} jours à {html.escape(r.place)}" for r in oa.itertuples())
+    tests = k["tests"]
 
     recos = [
-        battery_timing_reco(k),
-        reposition,
-        (
-            "Traiter les désactivations hors batterie",
-            f"{plural(n_other, 'scooter')} désactivé{'s' if n_other > 1 else ''} avec une batterie "
-            f"correcte au dernier relevé{other_long_text}. Ce motif pèse "
-            f"{pct(avg.n_disabled_other / fleet)} de la flotte en moyenne : c'est une capacité "
-            f"immobilisée que les seuls changements de batterie ne récupèrent pas. Une revue de leur "
-            f"statut (panne, maintenance, véhicule à récupérer) est à prévoir.",
-        ),
+        ("Avancer une partie de la tournée batterie en début d'après-midi",
+         f"Le pic de demande tombe chaque soir à {peaks}, avec en moyenne {fr(ev['queue_at_peak'].mean())} "
+         f"scooters bloqués faute de batterie. {n_majority} soirs sur {len(ev)}, la majorité des changements "
+         f"arrive après ce pic. Un scooter désactivé entre {MIDDAY_HOURS[0]}h et {MIDDAY_HOURS[1] + 1}h attend "
+         f"{fr(k['wait_midday'], 1)} h (médiane) la tournée du soir : le traiter entre 12h et 16h le remettrait "
+         f"en circulation pour le pic."),
+        (f"Repositionner environ {move_n} scooters chaque nuit",
+         f"{names(t)} génèrent {fr(t['dep'].sum())} départs par jour pour {fr(t['stock'].sum(), 1)} scooters "
+         f"disponibles, et figurent dans le top 10 des zones en tension au moins {int(t['days_top10'].min())} "
+         f"jours sur {k['n_zone_days']} : le déséquilibre est structurel. À l'inverse, {names(s)} gardent "
+         f"{fr(s['stock'].sum(), 1)} scooters pour {fr(s['dep'].sum(), 1)} départs par jour."),
+        ("Passer en revue chaque jour les scooters désactivés hors batterie",
+         f"Au dernier relevé, {k['other_now']} scooters sont désactivés avec une batterie correcte, dont "
+         f"{k['other_now_long']} depuis plus de {IDLE_HOURS} h et {k['other_now_3d']} depuis plus de trois "
+         f"jours. Les tests ont aussi repéré {oa_text}, loin de la zone de service."),
     ]
+    reco_html = "".join(f"<li><b>{html.escape(a)}.</b> {b}</li>" for a, b in recos)
 
     cmp_rows = ""
-    labels = {"nice": "Nice", "barcelona": "Barcelone"}
-    for _, r in k["compare"].iterrows():
-        cmp_rows += (
-            f"<tr><td>{labels.get(r.city, r.city)}</td><td>{fr(r.fleet)}</td><td>{pct(r.pct_available)}</td>"
-            f"<td>{pct(r.pct_battery)}</td><td>{pct(r.pct_other)}</td>"
-            f"<td>{fr(r.dep_per_vehicle_hour, 3)}</td><td>{fr(r.swaps_per_hour, 1)}</td></tr>"
-        )
-
-    tests = k["tests"]
-    reco_html = "".join(
-        f"<li><b>{html.escape(title)}.</b> {body}</li>" for title, body in recos
-    )
+    for city, label in ((CITY, "Nice"), ("barcelona", "Barcelone")):
+        if city in cmp_.index:
+            r = cmp_.loc[city]
+            cmp_rows += (f"<tr><td>{label}</td><td>{fr(r.fleet)}</td><td>{pct(r.pct_available)}</td>"
+                         f"<td>{pct(r.pct_battery, 1)}</td><td>{pct(r.pct_other, 1)}</td>"
+                         f"<td>{fr(r.dep_per_scooter_day, 1)}</td><td>{fr(r['median'], 1)} h</td></tr>")
 
     return f"""<!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
@@ -440,15 +154,15 @@ def render(k: dict) -> str:
 <style>
   @page {{ size: A4; margin: 11mm 12mm; }}
   * {{ box-sizing: border-box; }}
-  body {{ font-family: "Segoe UI", system-ui, sans-serif; color: {INK}; font-size: 8.6pt;
-         line-height: 1.38; margin: 0; background: #fff; }}
+  body {{ font-family: "Segoe UI", system-ui, sans-serif; color: {INK}; font-size: 8.5pt;
+         line-height: 1.36; margin: 0; background: #fff; }}
   h1 {{ font-size: 15pt; margin: 0; letter-spacing: -0.01em; }}
-  h2 {{ font-size: 9.4pt; margin: 9px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; color: {INK_2}; }}
+  h2 {{ font-size: 9.2pt; margin: 8px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; color: {INK_2}; }}
   .sub {{ color: {INK_2}; font-size: 8pt; margin-top: 2px; }}
-  .tiles {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px; }}
+  .tiles {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }}
   .tile {{ background: {SURFACE}; border: 1px solid rgba(11,11,11,0.10); border-radius: 6px; padding: 6px 8px; }}
   .tile .v {{ font-size: 15pt; font-weight: 600; }}
-  .tile .l {{ color: {INK_2}; font-size: 7.4pt; }}
+  .tile .l {{ color: {INK_2}; font-size: 7.3pt; }}
   .grid2 {{ display: grid; grid-template-columns: 1.08fr 1fr; gap: 10px; }}
   .fig {{ background: {SURFACE}; border: 1px solid rgba(11,11,11,0.10); border-radius: 6px; padding: 6px 8px; }}
   .fig .t {{ font-weight: 600; font-size: 8pt; }}
@@ -458,34 +172,35 @@ def render(k: dict) -> str:
   table {{ border-collapse: collapse; width: 100%; font-size: 7.8pt; font-variant-numeric: tabular-nums; }}
   th {{ text-align: left; color: {INK_2}; font-weight: 600; border-bottom: 1px solid {AXIS}; padding: 2px 4px; }}
   td {{ border-bottom: 1px solid {GRID}; padding: 2px 4px; }}
-  .method {{ color: {INK_2}; font-size: 7.6pt; }}
+  .method {{ color: {INK_2}; font-size: 7.5pt; }}
   .method b {{ color: {INK}; }}
   .foot {{ margin-top: 6px; color: {MUTED}; font-size: 7pt; display: flex; justify-content: space-between; }}
 </style></head>
 <body>
   <h1>YEGO Nice — note d'analyse opérationnelle</h1>
-  <div class="sub">Flux public GBFS de YEGO · {period} · {w.n_snapshots} relevés toutes les 2 min ·
-  premiers constats sur {duration(k['hours_observed'])} de données, collecte toujours en cours</div>
+  <div class="sub">Flux public GBFS de YEGO · du {w.start_at:%d/%m %Hh%M} au {w.end_at:%d/%m %Hh%M} ·
+  {fr(w.n_snapshots)} relevés toutes les 2 min · moyennes sur {k['n_days']} jours complets
+  (du {first:%d/%m} au {last:%d/%m}) · collecte toujours en cours</div>
 
   <div class="tiles">
-    <div class="tile"><div class="v">{fr(fleet)}</div><div class="l">scooters listés en moyenne
-      (hors véhicules en location)</div></div>
-    <div class="tile"><div class="v">{pct(unavailable / fleet, 1)}</div><div class="l">désactivés en moyenne :
-      {pct(avg.n_disabled_battery / fleet, 1)} batterie, {pct(avg.n_disabled_other / fleet, 1)} autre motif</div></div>
-    <div class="tile"><div class="v">{fr(k['departures_total'])}</div><div class="l">départs observés
-      (locations ou retraits terrain)</div></div>
-    <div class="tile"><div class="v">{len(k['swaps'])}</div><div class="l">changements de batterie détectés
-      sur place</div></div>
+    <div class="tile"><div class="v">{pct(k['pct_battery'] + k['pct_other'], 1)}</div><div class="l">de la
+      flotte désactivée en moyenne : {pct(k['pct_battery'], 1)} batterie, {pct(k['pct_other'], 1)} autre motif</div></div>
+    <div class="tile"><div class="v">{fr(k['wait']['median'], 1)} h</div><div class="l">d'attente médiane avant
+      changement de batterie{f" (Barcelone : {fr(bcn['median'], 1)} h)" if bcn is not None else ""}</div></div>
+    <div class="tile"><div class="v">{pct(ev['share_after_peak'].mean())}</div><div class="l">des changements
+      de batterie faits après le pic du soir, en moyenne sur {len(ev)} soirs</div></div>
+    <div class="tile"><div class="v">{fr(k['departures_per_day'])}</div><div class="l">départs par jour
+      ({fr(k['swaps_per_day'])} changements de batterie)</div></div>
   </div>
 
   <div class="grid2" style="margin-top:8px">
-    <div class="fig"><div class="t">État de la flotte listée, relevé par relevé</div>
-      {chart_fleet_state(k['snap'])}
-      <div class="n">Réservés (~{fr(avg.n_reserved)}) non représentés. Seuil de désactivation déduit des données :
-      aucun scooter actif sous {DISABLE_BATTERY_PCT} %.</div></div>
-    <div class="fig"><div class="t">Départs observés par heure</div>
-      {chart_departures(k['dep_hourly'])}
-      <div class="n">Un départ = un scooter qui disparaît du flux. Première et dernière heures partielles.</div></div>
+    <div class="fig"><div class="t">Journée type : état de la flotte listée</div>
+      {chart_fleet_state(p)}
+      <div class="n">Moyenne par heure sur {k['n_days']} jours complets. Aucun scooter actif sous
+      {DISABLE_BATTERY_PCT} % : YEGO les désactive.</div></div>
+    <div class="fig"><div class="t">Journée type : demande et changements de batterie</div>
+      {chart_timing(p)}
+      <div class="n">Pointillés : heure la plus chargée. Les changements se concentrent après le pic.</div></div>
   </div>
 
   <h2>Trois recommandations</h2>
@@ -494,34 +209,22 @@ def render(k: dict) -> str:
   <h2>Nice et Barcelone</h2>
   <table>
     <tr><th>Ville</th><th>Flotte listée</th><th>Disponibles</th><th>Désactivés batterie</th>
-        <th>Désactivés autre</th><th>Départs / scooter / h</th><th>Chgts batterie / h</th></tr>
+        <th>Désactivés autre</th><th>Départs / scooter / jour</th><th>Attente batterie (médiane)</th></tr>
     {cmp_rows}
   </table>
 
   <h2>Méthode et qualité des données</h2>
   <div class="method">
-    <b>Identifiants anonymisés.</b> YEGO régénère le <code>bike_id</code> à chaque requête : aucun identifiant
-    commun entre deux relevés, même pour un scooter immobile. J'ai donc reconstitué le suivi de chaque
-    véhicule par affectation optimale entre relevés successifs (position à 15 m près, type, batterie) :
-    {pct(k['tracking_rate'], 1)} des observations sont rattachées au véhicule du relevé précédent, le reste
-    correspondant à des arrivées.
-    <b>Pipeline.</b> Collecte Python → Parquet → modèles dbt sur DuckDB (staging, séjours, changements de
-    batterie, offre et demande par zone de ~500 m). <b>Tests dbt :</b> {tests['pass']} réussis,
-    {tests['warn']} avertissement(s), {tests['fail']} échec(s). Ils ont notamment détecté un scooter de
-    Barcelone publié en (0, 0). <b>Limites :</b> une seule nuit et une matinée observées ; un départ inclut
-    les retraits par les équipes terrain ; la durée d'immobilisation des véhicules présents au début de
-    la collecte est sous-estimée. Couverture : {w.n_snapshots} relevés, {int(w.n_gaps)} interruption(s).
+    <b>Identifiants anonymisés.</b> YEGO régénère le <code>bike_id</code> à chaque requête. J'ai reconstitué
+    le suivi de chaque scooter par affectation optimale entre relevés successifs (position à 15 m près, type,
+    batterie) : {pct(k['tracking_rate'], 1)} des observations sont rattachées au scooter du relevé précédent.
+    <b>Pipeline.</b> Collecte Python (GitHub Actions toutes les heures) → Parquet → modèles dbt sur DuckDB
+    → note, rapport, modèle Power BI et API. <b>Tests dbt :</b> {tests['pass']} réussis,
+    {tests['warn']} avertissement(s), {tests['fail']} échec(s) ; ils signalent notamment des batteries
+    publiées à 101 % et des scooters hors zone. <b>Limites :</b> deux semaines d'octobre, sans météo ; un
+    départ inclut les retraits par les équipes terrain ; une interruption de collecte de {fr(w.max_gap_h)} h
+    (12–13/10), exclue des moyennes.
   </div>
-
-  <h2>Ce que j'approfondirais avec les données internes</h2>
-  <ol>
-    <li><b>Séparer locations et interventions.</b> Croiser les départs observés avec les locations réelles
-      pour distinguer la demande des retraits terrain, et calculer un vrai taux d'utilisation par zone.</li>
-    <li><b>Mesurer le délai de changement de batterie.</b> Temps entre la désactivation sous {DISABLE_BATTERY_PCT} %
-      et la remise en service, par zone et par équipe : c'est l'indicateur qui pilote la disponibilité.</li>
-    <li><b>Chiffrer les recommandations.</b> Tester un repositionnement nocturne sur quelques zones et mesurer
-      son effet sur les départs du matin, en comparant avec des zones témoins.</li>
-  </ol>
 
   <div class="foot"><span>Code et données : {REPO_URL}</span>
     <span>Candidature Data Analyst – Opérations · VIE246717</span></div>

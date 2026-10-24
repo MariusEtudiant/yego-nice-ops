@@ -1,10 +1,10 @@
 """
-Rapport detaille en anglais, au format LaTeX (un seul fichier, a compiler sur Overleaf).
+Rapport en anglais au format LaTeX (un seul fichier, a compiler sur Overleaf ou avec pdflatex).
 
     python src/build_latex.py   ->   reports/yego_nice_report.tex
 
 Les graphiques sont dessines en pgfplots avec les donnees ecrites dans le .tex : aucune image a
-televerser. Les chiffres viennent des memes calculs que la note d'une page (build_report.build).
+televerser. Les chiffres viennent de src/analysis.py, comme ceux de la note en francais.
 """
 
 from __future__ import annotations
@@ -13,14 +13,7 @@ import pathlib
 
 import pandas as pd
 
-from build_report import (
-    DISABLE_BATTERY_PCT,
-    IDLE_HOURS,
-    REPO_URL,
-    battery_timing_facts,
-    build,
-    reposition_facts,
-)
+from analysis import CITY, DISABLE_BATTERY_PCT, IDLE_HOURS, LATE_HOURS, MIDDAY_HOURS, REPO_URL, build
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "reports" / "yego_nice_report.tex"
@@ -34,7 +27,7 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 
 
 def tex(s: str) -> str:
-    """Echappe les caracteres speciaux LaTeX d'un texte venant des donnees (noms de quartiers)."""
+    """Echappe les caracteres speciaux LaTeX d'un texte venant des donnees (noms de lieux)."""
     repl = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
             "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\^{}"}
     return "".join(repl.get(c, c) for c in str(s))
@@ -48,12 +41,12 @@ def pct(x: float, d: int = 0) -> str:
     return f"{100 * x:.{d}f}\\%"
 
 
-def hour(ts) -> str:
-    return f"{ts:%H}h"
-
-
 def day(ts) -> str:
     return f"{DAYS[ts.weekday()]} {ts.day} {MONTHS[ts.month - 1]}"
+
+
+def short_day(ts) -> str:
+    return f"{DAYS[ts.weekday()][:3]} {ts.day}/{ts.month}"
 
 
 def plural(n: int, word: str) -> str:
@@ -62,9 +55,18 @@ def plural(n: int, word: str) -> str:
 
 def names(df: pd.DataFrame) -> str:
     items = [tex(n) for n in dict.fromkeys(df["name"])]
-    if len(items) <= 1:
-        return "".join(items)
-    return ", ".join(items[:-1]) + " and " + items[-1]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def names_by_town(df: pd.DataFrame) -> str:
+    """Comme names(), mais regroupe les zones d'une meme commune : "A, B and C (all in Town)"."""
+    parts = [n.rsplit(" (", 1) for n in dict.fromkeys(df["name"])]
+    towns = {p[1].rstrip(")") for p in parts if len(p) == 2}
+    if len(towns) == 1 and all(len(p) == 2 for p in parts):
+        inner = [tex(p[0]) for p in parts]
+        joined = inner[0] if len(inner) == 1 else ", ".join(inner[:-1]) + " and " + inner[-1]
+        return f"{joined} (all in {tex(towns.pop())})"
+    return names(df)
 
 
 def coords(values) -> str:
@@ -78,24 +80,26 @@ def fill(template: str, **values) -> str:
     return template
 
 
+HOUR_LABELS = ",".join(f"{h:02d}h" if h % 3 == 0 else "" for h in range(24))
+
+
 # --- Figures pgfplots ------------------------------------------------------
 
 
-def figure_fleet(h: pd.DataFrame) -> str:
-    labels = ",".join(hour(t) for t in h["hour_local"])
-    ymax = (h["avg_available"] + h["avg_disabled_battery"] + h["avg_disabled_other"]).max() * 1.12
+def figure_fleet(p: pd.DataFrame, n_days: int) -> str:
+    ymax = (p["available"] + p["battery"] + p["other"]).max() * 1.12
     return fill(r"""
 \begin{figure}[ht]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
-        ybar stacked, bar width=8pt, width=\linewidth, height=4.4cm,
-        ymin=0, ymax=<<ymax>>, xmin=-0.6, xmax=<<xmax>>,
-        xtick={0,...,<<last>>}, xticklabels={<<labels>>},
-        tick label style={font=\scriptsize}, ylabel={Scooters (hourly mean)},
+        ybar stacked, bar width=7pt, width=\linewidth, height=4.3cm,
+        ymin=0, ymax=<<ymax>>, xmin=-0.6, xmax=23.6,
+        xtick={0,...,23}, xticklabels={<<labels>>},
+        tick label style={font=\scriptsize}, ylabel={Scooters},
         ylabel style={font=\small}, axis x line*=bottom, axis y line*=left,
         ymajorgrids, grid style={black!10},
-        legend style={at={(0.5,-0.2)}, anchor=north, legend columns=3, draw=none, font=\scriptsize},
+        legend style={at={(0.5,-0.22)}, anchor=north, legend columns=3, draw=none, font=\scriptsize},
         legend cell align=left]
       \addplot[fill=yblue, draw=white] coordinates {<<available>>};
       \addplot[fill=yorange, draw=white] coordinates {<<battery>>};
@@ -103,23 +107,21 @@ def figure_fleet(h: pd.DataFrame) -> str:
       \legend{Available, Disabled (battery below <<thr>>\%), Disabled (other reason)}
     \end{axis}
   \end{tikzpicture}
-  \caption{Composition of the scooters listed in the Nice feed, hourly mean. Reserved scooters
-  (about <<reserved>> on average) are not shown. Rented scooters are not in the feed at all.}
+  \caption{Scooters listed in the Nice feed by hour of the day, mean over <<n_days>> complete days.
+  Reserved scooters are not shown; rented scooters are not in the feed.}
   \label{fig:fleet}
 \end{figure}
-""", ymax=f"{ymax:.0f}", xmax=f"{len(h) - 0.4:.1f}", last=len(h) - 1, labels=labels,
-        available=coords(h["avg_available"]), battery=coords(h["avg_disabled_battery"]),
-        other=coords(h["avg_disabled_other"]), thr=DISABLE_BATTERY_PCT,
-        reserved=num(h["avg_reserved"].mean()))
+""", ymax=f"{ymax:.0f}", labels=HOUR_LABELS, available=coords(p["available"]),
+        battery=coords(p["battery"]), other=coords(p["other"]), thr=DISABLE_BATTERY_PCT, n_days=n_days)
 
 
-def figure_timing(h: pd.DataFrame, peak_idx: int | None) -> str:
-    labels = ",".join(hour(t) for t in h["hour_local"])
-    y1, y2, y3 = (h[c].max() * 1.2 + 1 for c in ("departures", "avg_disabled_battery", "swaps"))
-    marker = lambda ymax: (  # noqa: E731 - ligne verticale au pic de demande
-        rf"\draw[densely dashed, black!50] (axis cs:{peak_idx},0) -- (axis cs:{peak_idx},{ymax:.1f});"
-        if peak_idx is not None else ""
-    )
+def figure_timing(p: pd.DataFrame, n_days: int) -> str:
+    peak = int(p.loc[p["departures"].idxmax(), "hour"])
+    y1, y2, y3 = (p["departures"].max() * 1.2, p["battery"].max() * 1.25, p["swaps"].max() * 1.3)
+
+    def marker(ymax: float) -> str:
+        return rf"\draw[densely dashed, black!50] (axis cs:{peak},0) -- (axis cs:{peak},{ymax:.1f});"
+
     return fill(r"""
 \begin{figure}[ht]
   \centering
@@ -127,54 +129,79 @@ def figure_timing(h: pd.DataFrame, peak_idx: int | None) -> str:
     \begin{groupplot}[
         group style={group size=1 by 3, vertical sep=0.7cm, xticklabels at=edge bottom},
         title style={font=\scriptsize, at={(0,1)}, anchor=south west, inner sep=1pt},
-        width=\linewidth, height=2.9cm, xmin=-0.6, xmax=<<xmax>>,
-        xtick={0,...,<<last>>}, xticklabels={<<labels>>}, ymin=0,
-        tick label style={font=\scriptsize}, ylabel style={font=\scriptsize, align=center},
+        width=\linewidth, height=2.8cm, xmin=-0.6, xmax=23.6,
+        xtick={0,...,23}, xticklabels={<<labels>>}, ymin=0,
+        tick label style={font=\scriptsize},
         axis x line*=bottom, axis y line*=left, ymajorgrids, grid style={black!10}]
-      \nextgroupplot[ybar, bar width=8pt, ymax=<<y1>>, title={Departures per hour}]
+      \nextgroupplot[ybar, bar width=6pt, ymax=<<y1>>, title={Departures per hour}]
         \addplot[fill=yblue, draw=none] coordinates {<<departures>>};
         <<m1>>
-      \nextgroupplot[ymax=<<y2>>, title={Scooters waiting for a battery (hourly mean)}]
-        \addplot[yorange, thick, mark=*, mark size=1.3pt] coordinates {<<queue>>};
+      \nextgroupplot[ymax=<<y2>>, title={Scooters waiting for a battery}]
+        \addplot[yorange, thick, mark=*, mark size=1.2pt] coordinates {<<queue>>};
         <<m2>>
-      \nextgroupplot[ybar, bar width=8pt, ymax=<<y3>>, title={Battery swaps per hour}]
+      \nextgroupplot[ybar, bar width=6pt, ymax=<<y3>>, title={Battery swaps per hour}]
         \addplot[fill=yaqua, draw=none] coordinates {<<swaps>>};
         <<m3>>
     \end{groupplot}
   \end{tikzpicture}
-  \caption{Demand, battery queue and battery swaps in Nice, hour by hour. The dashed line marks
-  the hour with the most departures. The first and last hours are only partially observed.}
+  \caption{Demand, battery queue and battery swaps in Nice by hour of the day, mean over
+  <<n_days>> complete days. The dashed line marks the busiest hour.}
   \label{fig:timing}
 \end{figure}
-""", xmax=f"{len(h) - 0.4:.1f}", last=len(h) - 1, labels=labels,
-        y1=f"{y1:.0f}", y2=f"{y2:.0f}", y3=f"{y3:.0f}",
-        departures=coords(h["departures"]), queue=coords(h["avg_disabled_battery"]),
-        swaps=coords(h["swaps"]), m1=marker(y1), m2=marker(y2), m3=marker(y3))
+""", labels=HOUR_LABELS, y1=f"{y1:.0f}", y2=f"{y2:.0f}", y3=f"{y3:.1f}",
+        departures=coords(p["departures"]), queue=coords(p["battery"]), swaps=coords(p["swaps"]),
+        m1=marker(y1), m2=marker(y2), m3=marker(y3), n_days=n_days)
 
 
 # --- Tableaux --------------------------------------------------------------
 
 
-def zone_table(tension: pd.DataFrame, surplus: pd.DataFrame) -> str:
-    rows, seen = [], {}
-    for df, label in ((tension, "high demand, low supply"), (surplus, "high supply, low demand")):
-        for _, z in df.iterrows():
-            seen[z["name"]] = seen.get(z["name"], 0) + 1
-            name = tex(z["name"]) + (" (adjacent cell)" if seen[z["name"]] > 1 else "")
-            rows.append(f"    {name} & {z['stock']:.1f} & {z['departures']:.0f} & {label} \\\\")
+def evenings_table(ev: pd.DataFrame) -> str:
+    rows = "\n".join(
+        f"    {short_day(r.evening)} & {r.peak_hour}h & {r.peak_departures} & {r.queue_at_peak:.0f} & "
+        f"{r.swaps} & {100 * r.share_after_peak:.0f}\\% \\\\"
+        for r in ev.itertuples()
+    )
     return fill(r"""
 \begin{table}[ht]
   \centering
   \small
-  \begin{tabular}{lrrl}
+  \begin{tabular}{lrrrrr}
     \toprule
-    Zone ($\approx$ 500\,m cell) & Mean available scooters & Departures observed & Diagnosis \\
+    Evening & Busiest hour & Departures & Waiting for & Battery swaps & Swaps done \\
+            & (16h--22h)   & that hour  & a battery   & (until 10h)   & after the peak \\
     \midrule
 <<rows>>
     \bottomrule
   \end{tabular}
-  \caption{Zones where supply and demand are most out of balance in Nice. Zones are named after
-  the neighbourhood returned by OpenStreetMap for the centre of the cell.}
+  \caption{Evening by evening in Nice: the busiest hour, the scooters waiting for a battery at
+  that hour, and the share of the following battery swaps that came after it.}
+  \label{tab:evenings}
+\end{table}
+""", rows=rows)
+
+
+def zone_table(tension: pd.DataFrame, surplus: pd.DataFrame, n_days: int) -> str:
+    rows = []
+    for df, label in ((tension, "High demand, low supply"), (surplus, "High supply, low demand")):
+        rows.append(rf"    \multicolumn{{4}}{{l}}{{\emph{{{label}}}}} \\")
+        for _, z in df.iterrows():
+            top = f"{int(z['days_top10'])}/{n_days}" if label.startswith("High demand") else "--"
+            rows.append(rf"    \quad {tex(z['name'])} & {z['stock']:.1f} & {z['dep']:.1f} & {top} \\")
+    return fill(r"""
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{lrrc}
+    \toprule
+    Zone ($\approx$ 500\,m cell) & Available scooters & Departures & Days in top 10 \\
+                                 & (mean)             & per day    & of tension     \\
+    \midrule
+<<rows>>
+    \bottomrule
+  \end{tabular}
+  \caption{Zones of the Nice service area where supply and demand are most out of balance, mean
+  per complete day. Names come from OpenStreetMap.}
   \label{tab:zones}
 \end{table}
 """, rows="\n".join(rows))
@@ -184,127 +211,63 @@ def zone_table(tension: pd.DataFrame, surplus: pd.DataFrame) -> str:
 
 
 def render(k: dict) -> str:
-    w, avg, h = k["window"], k["avg"], k["hourly"].reset_index(drop=True)
-    fleet = avg.n_listed
-    disabled = avg.n_disabled_battery + avg.n_disabled_other
-    f = battery_timing_facts(h)
-    rf = reposition_facts(k)
-    swaps = k["swaps"]
-    n_other, n_other_long = len(k["other_idle"]), len(k["other_idle_long"])
-    tests = k["tests"]
-    cmp_ = k["compare"].set_index("city")
+    w, p, ev, cmp_ = k["window"], k["profile"], k["evenings"], k["compare"].set_index("city")
+    n_days = k["n_days"]
+    first_day, last_day = k["days"][0], k["days"][-1]
+    nice, bcn = cmp_.loc[CITY], cmp_.loc["barcelona"] if "barcelona" in cmp_.index else None
+    peak_hours = sorted(set(ev["peak_hour"]))
+    peak_text = " or ".join(f"{h}h" for h in peak_hours)
+    t, s = k["tension"], k["surplus"]
+    move_n = int(max(1, min(s["stock"].sum() - len(s), t["dep"].sum() - t["stock"].sum())))
+    oa = k["out_of_area"]
+    oa = oa.sort_values("city", ascending=False)   # Nice d'abord
+    oa_text = "; ".join(
+        f"one {'Nice' if r.city == 'nice' else 'Barcelona'} scooter stayed disabled for "
+        f"{r.days:.0f} days in {tex(r.place)}" for r in oa.itertuples())
+    qual = k["quality"]
+    bcn_wait = (f"In Barcelona the median is only {bcn['median']:.1f}\\,h"
+                f" (a quarter wait more than {bcn['p75']:.1f}\\,h)." if bcn is not None else "")
 
-    peak_idx = int(h.index[h["hour_local"] == f["peak_hour"]][0]) if f else None
-
-    # Pic du matin (s'il a ete observe), pour montrer que la file batterie y est deja vide.
-    morning = h.iloc[1:-1]
-    morning = morning[morning["hour_local"].dt.hour.between(5, 10)]
-    morning_text = ""
-    if len(morning) and f:
-        m = morning.loc[morning["departures"].idxmax()]
-        morning_text = (
-            f" The morning peak looks different: at {hour(m['hour_local'])} there were "
-            f"{plural(int(m['departures']), 'departure')} while only {num(m['avg_disabled_battery'])} "
-            f"scooters were waiting for a battery, because the queue had been cleared during the night."
-        )
-
-    other_min = h.loc[h["avg_disabled_other"].idxmin()]
-    other_max = h.loc[h["avg_disabled_other"].idxmax()]
-
-    if f:
-        timing_abstract = (
-            f"(ii) at the evening demand peak ({hour(f['peak_hour'])}), {num(f['queue_at_peak'])} scooters were "
-            f"waiting for a battery swap, while {f['in_window']} of the {f['n_swaps']} swaps I detected happened "
-            f"between {hour(f['start'])} and {hour(f['end'])}, "
-            + ("that is, after the peak; " if f["after_peak"] else "around the peak; ")
-        )
-        reco1 = (
-            r"\item \textbf{Start the battery swap round before the evening peak.} "
-            f"At {hour(f['peak_hour'])}, the busiest hour of the period ({plural(f['peak_departures'], 'departure')}), "
-            f"{num(f['queue_at_peak'])} scooters ({pct(f['queue_share'])} of the listed fleet) could not be rented "
-            f"because of their battery. Most swaps were done between {hour(f['start'])} and {hour(f['end'])}. "
-            f"Starting the round about two hours earlier would put these scooters back on the street when "
-            f"demand is highest. This should be checked over several evenings before changing the schedule."
-        )
-    else:
-        timing_abstract = "(ii) the battery queue is small and most swaps do not compete with demand peaks; "
-        reco1 = (
-            r"\item \textbf{Target the battery round by zone.} "
-            f"{k['battery_queue_total']} scooters were waiting for a battery at the last snapshot, mostly in "
-            f"{names(k['battery_queue'])}."
-        )
-
-    if len(k["tension"]):
-        reco2 = (
-            rf"\item \textbf{{Move about {rf['move_n']} scooters from low-demand to high-demand zones.}} "
-            f"{names(k['tension'])} had {rf['tension_departures']} departures for only "
-            f"{rf['tension_stock']:.1f} available scooters on average, while {names(k['surplus'])} kept "
-            f"{rf['surplus_stock']:.1f} scooters for {plural(rf['surplus_departures'], 'departure')} "
-            r"(Table~\ref{tab:zones}). Night-time, when demand is lowest, is the natural moment for this. "
-            "The exact number should be calibrated on several weeks of data."
-        )
-    else:
-        reco2 = (
-            r"\item \textbf{Monitor the zones with too many scooters.} "
-            f"{names(k['surplus'])} kept {rf['surplus_stock']:.1f} scooters for "
-            f"{plural(rf['surplus_departures'], 'departure')}."
-        )
-
-    long_text = (f", and {n_other_long} of them did not move for at least {IDLE_HOURS} hours"
-                 if n_other_long else "")
-    reco3 = (
-        r"\item \textbf{Review the scooters disabled for reasons other than battery.} "
-        f"At the last snapshot, {plural(n_other, 'scooter')} were disabled with a correct battery{long_text}. "
-        f"This group is {pct(avg.n_disabled_other / fleet)} of the fleet on average and it is not reduced by "
-        "battery swaps. Checking why they are disabled (breakdown, maintenance, vehicle to collect) could "
-        "free part of this capacity."
-    )
-
-    swap_detail = (
-        f"I detected {plural(len(swaps), 'battery swap')} in Nice. In {int(swaps['previous_is_disabled'].sum())} "
-        f"of them the scooter was disabled just before, and the battery went from "
-        f"{swaps['previous_battery_pct'].mean():.0f}\\% to {swaps['battery_pct'].mean():.0f}\\% on average."
-        if len(swaps) else "I did not detect any battery swap in Nice over the period."
-    )
-    timing_detail = (
-        f"Figure~\\ref{{fig:timing}} puts demand and battery operations on the same time axis. The busiest "
-        f"hour was {hour(f['peak_hour'])} with {plural(f['peak_departures'], 'departure')}. At that moment "
-        f"{num(f['queue_at_peak'])} scooters were disabled because of their battery. Swaps were concentrated "
-        f"between {hour(f['start'])} and {hour(f['end'])} ({f['in_window']} of {f['n_swaps']}), and the queue only "
-        f"reached its minimum at {hour(f['cleared'])}. In other words, the swap round worked well, but it "
-        f"started {'after' if f['after_peak'] else 'around'} the moment when the scooters were most needed."
-        + morning_text
-        if f else "The battery queue stayed small over the period, so its timing does not seem to be an issue."
-    )
-
-    barcelona = ""
-    if "barcelona" in cmp_.index:
-        b = cmp_.loc["barcelona"]
-        barcelona = (
-            f" Barcelona, with about {num(b.fleet)} scooters, follows the same {DISABLE_BATTERY_PCT}\\% rule and "
-            f"has very similar shares: {pct(b.pct_available)} available, {pct(b.pct_battery)} disabled for "
-            f"battery and {pct(b.pct_other)} for another reason."
-        )
-
-    start, end = w.start_at, w.end_at
     return fill(PREAMBLE + BODY,
-                start=f"{day(start)} at {start:%H:%M}", end=f"{day(end)} at {end:%H:%M}",
-                date=f"{end.day} {MONTHS[end.month - 1]} {end.year}",
-                n_snapshots=int(w.n_snapshots), hours=f"{k['hours_observed']:.0f}",
-                gaps_text="no interruption" if int(w.n_gaps) == 0 else plural(int(w.n_gaps), "interruption"),
-                fleet=num(fleet), available=pct(avg.n_available / fleet), disabled=pct(disabled / fleet, 1),
-                disabled_battery=pct(avg.n_disabled_battery / fleet, 1),
-                disabled_other=pct(avg.n_disabled_other / fleet, 1), thr=DISABLE_BATTERY_PCT,
-                departures=k["departures_total"], tracking=pct(k["tracking_rate"], 1),
-                other_min=num(other_min["avg_disabled_other"]), other_max=num(other_max["avg_disabled_other"]),
-                other_max_hour=hour(other_max["hour_local"]),
-                n_other=n_other, n_other_long=n_other_long, idle_hours=IDLE_HOURS,
-                timing_abstract=timing_abstract, swap_detail=swap_detail, timing_detail=timing_detail,
-                barcelona=barcelona, reco1=reco1, reco2=reco2, reco3=reco3,
-                fig_fleet=figure_fleet(h), fig_timing=figure_timing(h, peak_idx),
-                table_zones=zone_table(k["tension"], k["surplus"]),
-                tests_pass=tests["pass"], tests_warn=tests["warn"], tests_fail=tests["fail"],
-                repo=REPO_URL)
+                date=f"{w.end_at.day} {MONTHS[w.end_at.month - 1]} {w.end_at.year}", repo=REPO_URL,
+                start=f"{day(w.start_at)} at {w.start_at:%H:%M}", end=f"{day(w.end_at)} at {w.end_at:%H:%M}",
+                n_snapshots=num(w.n_snapshots), n_days=n_days,
+                full_from=day(pd.Timestamp(first_day)), full_to=day(pd.Timestamp(last_day)),
+                gap_h=f"{w.max_gap_h:.0f}", thr=DISABLE_BATTERY_PCT,
+                tracking=pct(k["tracking_rate"], 1),
+                warn_text=(r" The warnings are real findings, described in Section~\ref{sec:quality}."
+                           if k["tests"]["warn"] else ""),
+                tests_pass=k["tests"]["pass"], tests_warn=k["tests"]["warn"], tests_fail=k["tests"]["fail"],
+                fleet=num(k["fleet"]), available=pct(k["pct_available"]),
+                battery=pct(k["pct_battery"], 1), other=pct(k["pct_other"], 1),
+                q_min=num(k["battery_queue_min"]), q_max=num(k["battery_queue_max"]),
+                dep_day=num(k["departures_per_day"]), dep_scooter=f"{nice['dep_per_scooter_day']:.1f}",
+                swaps_day=num(k["swaps_per_day"]), swaps_disabled=pct(k["swaps_from_disabled"]),
+                b_before=f"{k['swap_battery_before']:.0f}", b_after=f"{k['swap_battery_after']:.0f}",
+                peak_text=peak_text, n_evenings=len(ev), n_majority=int((ev["share_after_peak"] > 0.5).sum()),
+                q_peak=num(ev["queue_at_peak"].mean()),
+                after_mean=pct(ev["share_after_peak"].mean()),
+                after_min=pct(ev["share_after_peak"].min()), after_max=pct(ev["share_after_peak"].max()),
+                morning_min=num(ev["morning_queue"].min()), morning_max=num(ev["morning_queue"].max()),
+                w_med=f"{k['wait']['median']:.1f}", w_p75=f"{k['wait']['p75']:.1f}",
+                w_p90=f"{k['wait']['p90']:.1f}", bcn_wait=bcn_wait,
+                w_mid=f"{k['wait_midday']:.1f}", w_late=f"{k['wait_late']:.1f}",
+                mid_from=MIDDAY_HOURS[0], mid_to=MIDDAY_HOURS[1] + 1,
+                late_from=LATE_HOURS[0],
+                late_to="midnight" if LATE_HOURS[1] == 23 else f"{LATE_HOURS[1] + 1}h",
+                waiting_now=k["waiting_now"], waiting_max=f"{k['waiting_now_max_days']:.1f}",
+                bcn_available=pct(bcn["pct_available"]) if bcn is not None else "--",
+                bcn_battery=pct(bcn["pct_battery"], 1) if bcn is not None else "--",
+                tension=names(t), tension_dep=num(t["dep"].sum()), tension_stock=f"{t['stock'].sum():.1f}",
+                tension_days=f"{int(t['days_top10'].min())}",
+                surplus=names_by_town(s), surplus_stock=f"{s['stock'].sum():.1f}", surplus_dep=f"{s['dep'].sum():.1f}",
+                move_n=move_n, other_now=k["other_now"], other_long=k["other_now_long"],
+                other_3d=k["other_now_3d"], other_max=f"{k['other_now_max_days']:.1f}",
+                idle_hours=IDLE_HOURS, oa_text=oa_text,
+                over100_obs=int(qual.over_100_obs), over100_veh=int(qual.over_100_vehicles),
+                active_low=num(qual.active_low_obs), valid_obs=num(qual.valid_obs / 1e6, 0),
+                fig_fleet=figure_fleet(p, n_days), fig_timing=figure_timing(p, n_days),
+                table_evenings=evenings_table(ev), table_zones=zone_table(t, s, n_days))
 
 
 PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
@@ -329,7 +292,6 @@ PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \setlist{itemsep=2pt, topsep=3pt}
 \setlength{\textfloatsep}{10pt}
 
-% Replace with your full name.
 \newcommand{\myname}{Marius Casamian}
 """
 
@@ -345,78 +307,114 @@ BODY = r"""
 \begin{abstract}
 \noindent YEGO publishes the position and battery level of its scooters in real time through the
 General Bikeshare Feed Specification (GBFS). I collected this feed every two minutes in Nice and
-Barcelona from <<start>> to <<end>> (<<n_snapshots>> snapshots for Nice) and computed operational
-indicators with a dbt pipeline. Three findings stand out for Nice: (i) YEGO disables every scooter
-below <<thr>>\% battery; <<timing_abstract>>(iii) about <<disabled_other>> of the fleet is disabled
-for reasons other than battery.
+Barcelona from <<start>> to <<end>> (<<n_snapshots>> snapshots for Nice, including <<n_days>>
+complete days) and computed operational indicators with dbt. Three findings stand out for Nice:
+(i) on <<n_majority>> of the <<n_evenings>> evenings observed, most battery swaps came after the demand peak,
+while about <<q_peak>> scooters were waiting for a battery at that peak; (ii) a scooter disabled
+for low battery waits <<w_med>>\,h (median) before its swap, about twice as long as in Barcelona;
+(iii) <<other>> of the fleet is disabled for reasons other than battery, often for days.
 \end{abstract}
 
 \section{Data and method}
 
 \textbf{Data.} For every scooter that is parked and not rented, the feed \cite{gbfs} gives its
-position, battery level, and two flags, \texttt{is\_reserved} and \texttt{is\_disabled}. A scooter
-being ridden is not listed. A small Python collector stores each snapshot as a Parquet file; over the
-<<hours>> hours studied here it had <<gaps_text>>. The feed refreshes positions about every four
-minutes, which is the real time resolution of the study.
+position, battery level and two flags, \texttt{is\_reserved} and \texttt{is\_disabled}. A Python
+collector, first on my computer and then on GitHub Actions every hour, stores each snapshot as a
+Parquet file. The collection has one interruption of <<gap_h>>\,h (12--13 October) and is complete
+from <<full_from>> to <<full_to>>; daily averages below use only these <<n_days>> complete days.
 
-\textbf{Anonymised identifiers.} The \texttt{bike\_id} field is regenerated at every request: two
-snapshots four minutes apart shared no identifier, although 113 scooters had not moved at all. To
-follow scooters anyway, I match the scooters of two consecutive snapshots. A pair $(i,j)$ is a
-candidate if both have the same type and are less than 15\,m apart, with cost
+\textbf{Anonymised identifiers.} The \texttt{bike\_id} field is regenerated at every request, so a
+scooter cannot be followed through its identifier. I match the scooters of two consecutive snapshots:
+a pair $(i,j)$ is a candidate if both have the same type and are less than 15\,m apart, with cost
 \begin{equation}
   c_{ij} = d_{ij} + \lambda\,\lvert b_i - b_j \rvert, \qquad \lambda = 0.5\ \text{m per battery point},
 \end{equation}
 where $d_{ij}$ is the distance and $b$ the battery level. I keep the one-to-one matching with the
 lowest total cost (Hungarian algorithm \cite{kuhn1955}), plus a second pass for GPS jumps up to
-150\,m when the battery is unchanged. A simple nearest-neighbour rule, my first attempt, broke about
-10\% of the tracks when scooters are parked side by side. With the assignment, <<tracking>> of the
-observations are linked to a scooter of the previous snapshot.
+150\,m when the battery is unchanged. <<tracking>> of the observations are linked to a scooter of
+the previous snapshot.
 
 \textbf{Events and quality checks.} A \emph{departure} is a scooter that disappears from the feed
 (rented, or picked up by the staff). A \emph{battery swap} is a rise of at least 20 battery points on
-the same scooter, kept only if it was disabled just before or did not move. Zones are cells of about
-500\,m named with OpenStreetMap \cite{nominatim}. Everything is modelled with dbt on DuckDB
-\cite{duckdb}, with data tests on missing values, positions outside the service area, gaps in the
-collection and the battery rule (<<tests_pass>> passed, <<tests_warn>> warning, <<tests_fail>>
-failed). The warning is a real finding: one Barcelona scooter is published at latitude 0,
-longitude 0 in every snapshot.
+the same scooter. A \emph{battery wait} runs from the moment a scooter is disabled for low battery
+to the moment it leaves this state. Everything is modelled with dbt on DuckDB \cite{duckdb}, with
+data tests on keys, relationships, positions, collection gaps and business rules
+(<<tests_pass>> passed, <<tests_warn>> warnings, <<tests_fail>> failed).<<warn_text>>
 
 \section{Results}
 
 \textbf{Fleet availability.} On average <<fleet>> scooters were listed in Nice and <<available>>
-were available (Figure~\ref{fig:fleet}). <<disabled>> were disabled: <<disabled_battery>> because of
-their battery and <<disabled_other>> for another reason. No enabled scooter ever had less than
-<<thr>>\% battery, so YEGO disables scooters under this threshold. The ``other reason'' group has a
-stable base of about <<other_min>> scooters and rises to <<other_max>> around <<other_max_hour>>,
-during the evening operations.<<barcelona>>
+were available (Figure~\ref{fig:fleet}). <<battery>> were disabled because of their battery and
+<<other>> for another reason. No active scooter had less than <<thr>>\% battery, apart from a few
+transient cases in Barcelona, so YEGO disables scooters under this threshold. The battery queue
+never empties: between <<q_min>> and <<q_max>> scooters are waiting at any hour of an average day.
+In Barcelona, <<bcn_available>> of the scooters are available and only <<bcn_battery>> wait for
+a battery. Nice has about <<dep_scooter>> departures per scooter and per day (<<dep_day>> in
+total).
 
 <<fig_fleet>>
 
-\textbf{Battery swaps and demand.} <<swap_detail>> <<timing_detail>>
+\textbf{Battery swaps and demand.} I detected <<swaps_day>> battery swaps per day in Nice;
+<<swaps_disabled>> of them on a disabled scooter, whose battery went from <<b_before>>\% to
+<<b_after>>\% on average. Demand peaks at the end of the afternoon, and every evening the busiest
+hour was <<peak_text>> (Table~\ref{tab:evenings}). Swaps, however, are concentrated between 20h and
+2h (Figure~\ref{fig:timing}): on average <<after_mean>> of the swaps of an evening and night
+came after its peak (from <<after_min>> to <<after_max>> depending on the evening). The queue is
+also not emptied by the morning: <<morning_min>> to <<morning_max>> scooters were still waiting
+between 5h and 9h.
 
 <<fig_timing>>
 
-\textbf{Supply and demand by zone.} Some central zones have many departures and few scooters, while
-others keep scooters that are almost never rented (Table~\ref{tab:zones}).
+<<table_evenings>>
+
+\textbf{Battery waiting time.} Once disabled for low battery, a scooter in Nice waits
+<<w_med>>\,h before its swap (median); a quarter wait more than <<w_p75>>\,h and a tenth more than
+<<w_p90>>\,h. <<bcn_wait>> The hour matters: scooters disabled between <<mid_from>>h and
+<<mid_to>>h wait <<w_mid>>\,h (median), because they are only handled by the evening round, against
+<<w_late>>\,h for scooters disabled between <<late_from>>h and <<late_to>>. At the last snapshot,
+<<waiting_now>> scooters were waiting, one of them for <<waiting_max>> days.
+
+\textbf{Supply and demand by zone.} The same central zones are short of scooters almost every day,
+while zones in the west of the service area keep scooters that are rarely rented
+(Table~\ref{tab:zones}).
 
 <<table_zones>>
+
+\subsection{Data quality findings}
+\label{sec:quality}
+
+The tests flagged several things that an Operations team would want to know: <<oa_text>>, far
+outside the service area; <<over100_obs>> observations of <<over100_veh>> Barcelona scooters show a
+battery of 101\%; and <<active_low>> of <<valid_obs>> million observations show an active scooter
+below <<thr>>\%, always for a few minutes only. One Barcelona scooter is also published at latitude
+0, longitude 0 in every snapshot.
 
 \section{Recommendations}
 
 \begin{enumerate}
-  <<reco1>>
-  <<reco2>>
-  <<reco3>>
+  \item \textbf{Move part of the evening battery round to the early afternoon.} Scooters disabled
+  around midday wait until the evening round, and about <<q_peak>> scooters are unavailable at the
+  daily peak (<<peak_text>>). Swapping them between 12h and 16h would put them back on the street
+  for the peak, and would bring Nice closer to Barcelona's waiting time.
+  \item \textbf{Move about <<move_n>> scooters from low-demand to high-demand zones every night.}
+  <<tension>> generate <<tension_dep>> departures per day for <<tension_stock>> available scooters,
+  and were in the top 10 of tension on at least <<tension_days>> of the <<n_days>> days: the
+  imbalance is structural. <<surplus>> keep <<surplus_stock>> scooters for <<surplus_dep>>
+  departures per day.
+  \item \textbf{Review the scooters disabled for other reasons every day.} At the last snapshot,
+  <<other_now>> scooters were disabled with a correct battery, <<other_long>> of them for more than
+  <<idle_hours>>\,h and <<other_3d>> for more than three days. A daily list built from the data,
+  including the scooters outside the service area, would free part of this capacity.
 \end{enumerate}
 
 \section{Limitations and next steps}
 
-The study covers one evening and one night, so these patterns must be confirmed over several weeks
-(the collector is still running). A departure can be a rental or a pick-up by the staff, rides shorter
-than four minutes are invisible, and the tracking can still make mistakes in dense parking spots.
-With YEGO's internal data, I would first join departures with real rentals to measure true demand,
-then measure the delay between a scooter being disabled under <<thr>>\% and its return to service,
-and finally test the recommendations on a few zones against similar zones left unchanged.
+The study covers two weeks of October, without weather data, so seasonal effects are not measured.
+A departure can be a rental or a pick-up by the staff, rides shorter than about four minutes are
+invisible, and the tracking can make mistakes in dense parking spots. With YEGO's internal data, I
+would first join departures with real rentals to measure true demand, then compare the battery
+waiting time per team and per shift, and finally test the recommendations on a few zones against
+similar zones left unchanged.
 
 {\small
 \begin{thebibliography}{9}
@@ -427,7 +425,6 @@ and finally test the recommendations on a few zones against similar zones left u
   \emph{Naval Research Logistics Quarterly}, 2(1--2):83--97, 1955.
 \bibitem{duckdb} M.~Raasveldt and H.~M\"uhleisen. DuckDB: an embeddable analytical database.
   \emph{SIGMOD}, 2019.
-\bibitem{nominatim} OpenStreetMap contributors. \emph{Nominatim}. \url{https://nominatim.org}.
 \end{thebibliography}
 }
 

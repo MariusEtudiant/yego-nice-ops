@@ -532,6 +532,131 @@ createOrReplace
 
 		annotation PBI_ResultType = Table
 
+	table fct_battery_waits
+		lineageTag: 2589f364-9c22-57e7-a235-b90cd4ae9245
+
+		measure 'Median Battery Wait (h)' =
+				CALCULATE (
+				    MEDIAN ( fct_battery_waits[wait_hours] ),
+				    fct_battery_waits[outcome] = "swapped",
+				    fct_battery_waits[left_censored] = FALSE ()
+				)
+			formatString: 0.0
+			lineageTag: d2e18227-dc7b-5ff8-b79d-7496530718b7
+
+		measure 'Battery Waits over 12h %' =
+				DIVIDE (
+				    CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = "swapped",
+				        fct_battery_waits[left_censored] = FALSE (), fct_battery_waits[wait_hours] > 12 ),
+				    CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = "swapped",
+				        fct_battery_waits[left_censored] = FALSE () )
+				)
+			formatString: 0%
+			lineageTag: cb39058d-2f8e-5b37-8b19-c3ac1d08e8d3
+
+		measure 'Scooters Waiting Now' = CALCULATE ( COUNTROWS ( fct_battery_waits ), fct_battery_waits[outcome] = "ongoing" )
+			formatString: #,0
+			lineageTag: eaab56aa-54f6-5129-aaa0-cb653751fb4a
+
+		column city
+			dataType: string
+			isHidden
+			lineageTag: 2a91ad14-331e-5d20-9760-56fe9615f364
+			summarizeBy: none
+			sourceColumn: city
+
+			annotation SummarizationSetBy = Automatic
+
+		column track_id
+			dataType: string
+			isHidden
+			lineageTag: e2cab932-40c0-50d6-80dd-996775c78145
+			summarizeBy: none
+			sourceColumn: track_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column episode
+			dataType: double
+			formatString: 0.00
+			isHidden
+			lineageTag: 79a9ded9-a1c9-5c2e-9cb5-32d87cb1d170
+			summarizeBy: sum
+			sourceColumn: episode
+
+			annotation SummarizationSetBy = Automatic
+
+		column start_local
+			dataType: dateTime
+			formatString: General Date
+			lineageTag: 88b23311-3cbf-570f-823e-956346f62440
+			summarizeBy: none
+			sourceColumn: start_local
+
+			annotation SummarizationSetBy = Automatic
+
+		column start_hour
+			dataType: int64
+			isHidden
+			lineageTag: e3d0dbcc-39b2-5eab-95e0-b3dcd6008670
+			summarizeBy: none
+			sourceColumn: start_hour
+
+			annotation SummarizationSetBy = Automatic
+
+		column zone_id
+			dataType: string
+			isHidden
+			lineageTag: 34ff4aff-a782-50ae-a1dd-39f01e737ff2
+			summarizeBy: none
+			sourceColumn: zone_id
+
+			annotation SummarizationSetBy = Automatic
+
+		column min_battery_pct
+			dataType: double
+			formatString: 0.00
+			lineageTag: ef858b02-977f-5896-8dcd-f2642d1bbd0e
+			summarizeBy: sum
+			sourceColumn: min_battery_pct
+
+			annotation SummarizationSetBy = Automatic
+
+		column outcome
+			dataType: string
+			lineageTag: 7ab9d5b1-7da2-538f-b22e-700e4b3dfb3b
+			summarizeBy: none
+			sourceColumn: outcome
+
+			annotation SummarizationSetBy = Automatic
+
+		column wait_hours
+			dataType: double
+			formatString: 0.00
+			lineageTag: 377c5a34-754a-5918-b3c1-e9f49d4e35e8
+			summarizeBy: sum
+			sourceColumn: wait_hours
+
+			annotation SummarizationSetBy = Automatic
+
+		column left_censored
+			dataType: boolean
+			lineageTag: 459021e8-4f9a-5cfd-821b-9d78e1110901
+			summarizeBy: none
+			sourceColumn: left_censored
+
+			annotation SummarizationSetBy = Automatic
+
+		partition fct_battery_waits = m
+			mode: import
+			source =
+					let
+					    Source = Parquet.Document ( File.Contents ( DataFolder & "fct_battery_waits.parquet" ) )
+					in
+					    Source
+
+		annotation PBI_ResultType = Table
+
 	relationship f31cf6a0-06cb-5abe-8789-21c513455568
 		fromColumn: fct_fleet_hourly.city
 		toColumn: dim_city.city
@@ -558,4 +683,12 @@ createOrReplace
 
 	relationship a57ee9cd-e162-5e34-bc57-f39a693731fa
 		fromColumn: fct_battery_swaps.local_hour
+		toColumn: dim_hour.local_hour
+
+	relationship a43e29d9-4c2d-59e9-aa01-7047e7605249
+		fromColumn: fct_battery_waits.zone_id
+		toColumn: dim_zone.zone_id
+
+	relationship 31269f3a-ee42-5ac8-9546-6fdc2c10058e
+		fromColumn: fct_battery_waits.start_hour
 		toColumn: dim_hour.local_hour

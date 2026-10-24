@@ -29,6 +29,11 @@ TABLES = {
                previous_battery_pct, battery_pct, battery_gain_pct, previous_is_disabled, is_confirmed
         from fct_battery_swaps
     """,
+    "fct_battery_waits": """
+        select city, track_id, episode, start_local, start_hour, zone_id, min_battery_pct,
+               outcome, wait_hours, left_censored
+        from fct_battery_waits
+    """,
 }
 
 

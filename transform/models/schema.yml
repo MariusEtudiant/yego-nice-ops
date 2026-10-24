@@ -108,3 +108,29 @@ models:
               arguments:
                 to: ref('dim_hour')
                 field: local_hour
+
+  - name: fct_battery_waits
+    description: "Attente d'un scooter desactive faute de batterie, de la desactivation a la sortie de la file (changement sur place, recuperation ou attente en cours)."
+    columns:
+      - name: track_id
+        tests: [not_null]
+      - name: outcome
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["swapped", "left", "ongoing", "other"]
+      - name: wait_hours
+        tests: [not_null]
+      - name: zone_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: start_hour
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hour')
+                field: local_hour

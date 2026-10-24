@@ -31,3 +31,4 @@ powerbi/**/.pbi/cache.abf
 
 # Flux statiques quotidiens : deja versionnes sur la branche data (collecte dans le cloud)
 data/static/city=*/date=*/
+.venv-ci/

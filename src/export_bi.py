@@ -42,8 +42,10 @@ def main() -> None:
     con = duckdb.connect(str(DB), read_only=True)
     for name, query in TABLES.items():
         path = (OUT / f"{name}.parquet").as_posix()
-        con.sql(f"copy ({query}) to '{path}' (format parquet, compression zstd)")
-        n = con.sql(f"select count(*) from read_parquet('{path}')").fetchone()[0]
+        # execute + fetchall : compatible DuckDB 1.x et 2.x (en 2.0, une relation n'a plus fetchone() et
+        # un resultat lu partiellement bloque la connexion).
+        con.execute(f"copy ({query}) to '{path}' (format parquet, compression zstd)").fetchall()
+        n = con.execute(f"select count(*) from read_parquet('{path}')").fetchall()[0][0]
         print(f"{name}: {n} lignes")
 
 

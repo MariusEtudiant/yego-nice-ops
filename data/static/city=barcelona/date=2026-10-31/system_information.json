@@ -1,0 +1,31 @@
+{
+  "last_updated": 1793404836,
+  "ttl": 240,
+  "data": {
+    "system_id": "yego barcelona",
+    "language": "en",
+    "name": "Yego urban mobility",
+    "shot_name": "Yego",
+    "operator": "Yego",
+    "url": "https://www.rideyego.com/",
+    "timezone": "Europe/Madrid",
+    "start_date": "2021-07-14",
+    "email": "marc@rideyego.com",
+    "feed_contact_email": "tech@rideyego.com",
+    "rental_apps": {
+      "android": {
+        "store_uri": "https://play.google.com/store/apps/details?id=com.getyugo.app",
+        "discovery_uri": "yego://"
+      },
+      "ios": {
+        "store_uri": "https://apps.apple.com/es/app/yugo-mobility/id1181020675",
+        "discovery_uri": "yego://"
+      }
+    },
+    "terms_url": "https://yugo-assets.s3.amazonaws.com/legal/termsandconditions_yego_en.pdf",
+    "terms_last_updated": "2026-10-01",
+    "privacy_url": "https://yugo-assets.s3.amazonaws.com/legal/privacy_policy_en.pdf",
+    "privacy_last_updated": "2024-03-01"
+  },
+  "version": "2.3"
+}
